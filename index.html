@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Comically Large Paintbrush</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="top-bar">
+    <svg class="wave" viewBox="0 0 1200 40" preserveAspectRatio="none">
+      <path d="M0 20 Q50 0 100 20 T200 20 T300 20 T400 20 T500 20 T600 20 T700 20 T800 20 T900 20 T1000 20 T1100 20 T1200 20" fill="none" stroke="#fff" stroke-width="3"/>
+    </svg>
+  </header>
+
+  <main class="game-layout">
+    <aside class="sidebar sidebar-left">
+      <div class="player-panel">
+        <h2>Player 1</h2>
+        <div class="color-indicator" style="background: #e74c3c;"></div>
+      </div>
+
+      <div class="brush-options">
+        <h3>Brush Size</h3>
+        <div class="size-buttons">
+          <button class="size-btn" data-player="1" data-size="4">
+            <span class="size-dot" style="width:6px;height:6px;"></span> 
+          </button>
+          <button class="size-btn active" data-player="1" data-size="8">
+            <span class="size-dot" style="width:10px;height:10px;"></span> 
+          </button>
+          <button class="size-btn" data-player="1" data-size="16">
+            <span class="size-dot" style="width:16px;height:16px;"></span> 
+          </button>
+          <button class="size-btn" data-player="1" data-size="28">
+            <span class="size-dot" style="width:22px;height:22px;"></span> 
+          </button>
+        </div>
+      </div>
+
+      <button class="undo-btn" data-player="1">Undo Last Stroke</button>
+    </aside>
+
+    <section class="canvas-container">
+      <canvas id="gameCanvas"></canvas>
+    </section>
+
+    <aside class="sidebar sidebar-right">
+      <div class="player-panel">
+        <h2>Player 2</h2>
+        <div class="color-indicator" style="background: #3498db;"></div>
+      </div>
+
+      <div class="brush-options">
+        <h3>Brush Size</h3>
+        <div class="size-buttons">
+          <button class="size-btn" data-player="2" data-size="4">
+            <span class="size-dot" style="width:6px;height:6px;"></span> 
+          </button>
+          <button class="size-btn active" data-player="2" data-size="8">
+            <span class="size-dot" style="width:10px;height:10px;"></span> 
+          </button>
+          <button class="size-btn" data-player="2" data-size="16">
+            <span class="size-dot" style="width:16px;height:16px;"></span> 
+          </button>
+          <button class="size-btn" data-player="2" data-size="28">
+            <span class="size-dot" style="width:22px;height:22px;"></span> 
+          </button>
+        </div>
+      </div>
+
+      <button class="undo-btn" data-player="2">Undo Last Stroke</button>
+    </aside>
+  </main>
+
+  <script src="https://unpkg.com/kaplay@3001/dist/kaplay.js"></script>
+  <script src="game.js"></script>
+</body>
+</html>
