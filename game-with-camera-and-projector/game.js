@@ -158,10 +158,44 @@ onMouseRelease(() => { currentStroke = null; });
 //  their own side, so each will naturally be in the correct normalised half.)
 
 let trackerConnected  = false;
-let trackerDot        = { x:0.5, y:0.5, active:false };
+let trackerP1         = { x:0.5, y:0.5, active:false };
+let trackerP2         = { x:0.5, y:0.5, active:false };
 
 // Stroke-per-player for the tracker (separate from mouse strokes)
 const trackerStroke = { 1: null, 2: null };
+
+function handleTrackerPoint(point, playerOverride) {
+  if (!point.active) {
+    trackerStroke[playerOverride] = null;
+    return;
+  }
+
+  const gx = point.x * width();
+  const gy = point.y * height();
+  const pt = vec2(gx, gy);
+
+  const player = playerOverride;
+  const strokeColor = player === 1 ? [231,76,60] : [52,152,219];
+
+  if (!trackerStroke[player]) {
+    trackerStroke[player] = {
+      points: [pt],
+      color:  strokeColor,
+      size:   playerState[player].brushSize,
+      opacity: playerState[player].opacity,
+      halftone: playerState[player].halftone,
+      side: player === 1 ? "left" : "right",
+      player,
+    };
+    playerState[player].strokes.push(trackerStroke[player]);
+  } else {
+    const last = trackerStroke[player].points.at(-1);
+    const dx = pt.x - last.x, dy = pt.y - last.y;
+    if (dx*dx + dy*dy > 4) {
+      trackerStroke[player].points.push(pt);
+    }
+  }
+}
 
 async function pollTracker() {
   try {
@@ -170,7 +204,6 @@ async function pollTracker() {
     const data = await res.json();
     trackerConnected = true;
 
-    // Handle reset command
     if (data.reset) {
       playerState[1].strokes = [];
       playerState[2].strokes = [];
@@ -178,43 +211,11 @@ async function pollTracker() {
       trackerStroke[2] = null;
     }
 
-    trackerDot = data;
+    trackerP1 = data.p1 ?? { x:0.5, y:0.5, active:false };
+    trackerP2 = data.p2 ?? { x:0.5, y:0.5, active:false };
 
-    if (data.active) {
-      // Map normalised (0-1) → game pixels
-      const gx = data.x * width();
-      const gy = data.y * height();
-      const pt = vec2(gx, gy);
-
-      // Determine which player based on horizontal position
-      const side   = gx < DIVIDER_X ? "left" : "right";
-      const player = side === "left" ? 1 : 2;
-      const strokeColor = player===1 ? [231,76,60] : [52,152,219];
-
-      if (!trackerStroke[player]) {
-        // Start a new stroke
-        trackerStroke[player] = {
-          points: [pt],
-          color:  strokeColor,
-          size:   playerState[player].brushSize,
-          opacity: playerState[player].opacity,
-          halftone: playerState[player].halftone,
-          side, player,
-        };
-        playerState[player].strokes.push(trackerStroke[player]);
-      } else {
-        // Continue stroke — only add point if moved enough
-        const last = trackerStroke[player].points.at(-1);
-        const dx   = pt.x - last.x, dy = pt.y - last.y;
-        if (dx*dx + dy*dy > 4) {   // ~2px movement threshold
-          trackerStroke[player].points.push(pt);
-        }
-      }
-    } else {
-      // Pen lifted — close both strokes
-      trackerStroke[1] = null;
-      trackerStroke[2] = null;
-    }
+    handleTrackerPoint(trackerP1, 1);
+    handleTrackerPoint(trackerP2, 2);
 
   } catch (_) {
     trackerConnected = false;
@@ -236,9 +237,13 @@ statusEl.style.cssText = `
 document.body.appendChild(statusEl);
 
 setInterval(() => {
-  statusEl.textContent = trackerConnected
-    ? `📷 Tracker connected  |  x:${trackerDot.x.toFixed(3)}  y:${trackerDot.y.toFixed(3)}  ${trackerDot.active?"●":"○"}`
-    : "📷 Tracker offline — drawing with mouse only";
+  if (trackerConnected) {
+    const p1s = `P1(${trackerP1.x.toFixed(3)},${trackerP1.y.toFixed(3)}) ${trackerP1.active?"●":"○"}`;
+    const p2s = `P2(${trackerP2.x.toFixed(3)},${trackerP2.y.toFixed(3)}) ${trackerP2.active?"●":"○"}`;
+    statusEl.textContent = `📷 Tracker connected  |  ${p1s}  |  ${p2s}`;
+  } else {
+    statusEl.textContent = "📷 Tracker offline — drawing with mouse only";
+  }
   statusEl.style.opacity = trackerConnected ? "1" : "0.6";
 }, 200);
 
@@ -258,14 +263,21 @@ onDraw(() => {
     }
   }
 
-  // Tracker cursor crosshair
-  if (trackerConnected && trackerDot.active) {
-    const gx = trackerDot.x * width();
-    const gy = trackerDot.y * height();
-    const r  = 12;
-    drawLine({ p1:vec2(gx-r,gy), p2:vec2(gx+r,gy), width:2, color:rgb(0,220,80), opacity:0.7 });
-    drawLine({ p1:vec2(gx,gy-r), p2:vec2(gx,gy+r), width:2, color:rgb(0,220,80), opacity:0.7 });
-    drawCircle({ pos:vec2(gx,gy), radius:5, color:rgb(0,220,80), opacity:0.8 });
+  // Tracker cursor crosshairs — P1 (green) and P2 (cyan)
+  if (trackerConnected) {
+    const cursors = [
+      { dot: trackerP1, col: rgb(0, 220, 80) },
+      { dot: trackerP2, col: rgb(0, 200, 255) },
+    ];
+    for (const { dot, col } of cursors) {
+      if (!dot.active) continue;
+      const gx = dot.x * width();
+      const gy = dot.y * height();
+      const r  = 12;
+      drawLine({ p1:vec2(gx-r,gy), p2:vec2(gx+r,gy), width:2, color:col, opacity:0.7 });
+      drawLine({ p1:vec2(gx,gy-r), p2:vec2(gx,gy+r), width:2, color:col, opacity:0.7 });
+      drawCircle({ pos:vec2(gx,gy), radius:5, color:col, opacity:0.8 });
+    }
   }
 });
 
@@ -278,6 +290,7 @@ document.querySelectorAll(".size-btn").forEach(btn => {
     btn.classList.add("active");
   });
 });
+
 
 document.querySelectorAll(".halftone-btn").forEach(btn => {
   btn.addEventListener("click", () => {

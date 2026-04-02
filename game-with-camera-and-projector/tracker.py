@@ -1,8 +1,8 @@
 """
 Comically Large Paintbrush — Camera Tracker
 ============================================
-Tracks a bright/colored object via webcam, applies a perspective warp
-to map the physical canvas corners into a normalized 4:3 coordinate
+Tracks up to TWO bright/colored objects via webcam, applies a perspective
+warp to map the physical canvas corners into a normalized 4:3 coordinate
 space, and exposes the result over a tiny HTTP server so the game can
 poll it.
 
@@ -19,14 +19,18 @@ Controls (OpenCV window)
   R          — reset all strokes (sends reset event to game)
   Q / ESC    — quit
 
+  CUSTOM mode only:
+    Left-click   — sample color under cursor → set Pencil 1 color
+    Right-click  — sample color under cursor → set Pencil 2 color
+
 HTTP endpoint (default port 5050)
 ----------------------------------
-  GET /state   →  {"x": 0.0-1.0, "y": 0.0-1.0, "active": bool, "reset": bool}
+  GET /state   →  {
+                    "p1": {"x": 0-1, "y": 0-1, "active": bool},
+                    "p2": {"x": 0-1, "y": 0-1, "active": bool},
+                    "reset": bool
+                  }
   GET /health  →  {"ok": true}
-
-  x/y are normalized 0-1 within the warped canvas rectangle.
-  active=true while the tracked point is visible.
-  reset=true once after R is pressed (auto-clears after one read).
 """
 
 import cv2
@@ -34,41 +38,73 @@ import numpy as np
 import json
 import threading
 import time
-import math
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
 # ── Config ────────────────────────────────────────────────────────────────────
 PORT        = 5050
-CAMERA_IDX  = 0          # change if your webcam isn't device 0
-FLIP_H      = False      # set True if image is mirrored
+CAMERA_IDX  = 0
+FLIP_H      = False
 WINDOW_NAME = "CLPbrush Tracker  |  C=corners  M=mode  [/]=threshold  R=reset  Q=quit"
 
-# Tracking modes
 MODES = ["BRIGHT", "RED", "GREEN", "BLUE", "CUSTOM"]
 
-# Default HSV range for CUSTOM mode (edit to your object's color)
-CUSTOM_HSV_LOW  = np.array([100, 150, 100])   # blue-ish by default
-CUSTOM_HSV_HIGH = np.array([130, 255, 255])
-
 # ── Shared state (thread-safe via lock) ────────────────────────────────────────
-_lock    = threading.Lock()
-_state   = {"x": 0.5, "y": 0.5, "active": False, "reset": False}
-_corners = []            # list of up to 4 (x,y) pixel tuples
-_mode    = "BRIGHT"
-_thresh  = 200           # brightness threshold (0-255) for BRIGHT mode
-_hue_tol = 15            # ±hue tolerance for color modes
+_lock  = threading.Lock()
+_state = {
+    "p1":    {"x": 0.5, "y": 0.5, "active": False},
+    "p2":    {"x": 0.5, "y": 0.5, "active": False},
+    "reset": False,
+}
+_corners     = []
+_mode        = "BRIGHT"
+_thresh      = 200
+_hue_tol     = 15
+
+# Custom mode: two independent HSV color ranges
+_c1_low  = np.array([100, 150, 100])   # Pencil 1 (blue-ish default)
+_c1_high = np.array([130, 255, 255])
+_c2_low  = np.array([35,  100,  80])   # Pencil 2 (green-ish default)
+_c2_high = np.array([85,  255, 255])
+_c1_set  = False                        # True once user has clicked a color
+_c2_set  = False
+
+# Latest frame shared with mouse callback for color picking
+_last_frame  = None
+_corner_mode = False
 
 def get_state():
     with _lock:
-        s = dict(_state)
-        _state["reset"] = False   # consume reset flag
+        s = {
+            "p1":    dict(_state["p1"]),
+            "p2":    dict(_state["p2"]),
+            "reset": _state["reset"],
+        }
+        _state["reset"] = False
     return s
 
-def set_point(nx, ny, active):
+def set_points(c1, c2, M_warp, out_w, out_h, frame_shape):
+    """Convert two optional pixel centroids to normalised state."""
     with _lock:
-        _state["x"]      = float(nx)
-        _state["y"]      = float(ny)
-        _state["active"] = bool(active)
+        for key, centroid in (("p1", c1), ("p2", c2)):
+            if centroid:
+                cx, cy = centroid
+                if M_warp is not None:
+                    v  = np.array([[[cx, cy]]], dtype="float32")
+                    r  = cv2.perspectiveTransform(v, M_warp)
+                    nx = float(r[0, 0, 0]) / out_w
+                    ny = float(r[0, 0, 1]) / out_h
+                    nx = max(0.0, min(1.0, nx))
+                    ny = max(0.0, min(1.0, ny))
+                    active = True
+                else:
+                    h, w   = frame_shape[:2]
+                    nx, ny = cx / w, cy / h
+                    active = True
+                _state[key]["x"]      = nx
+                _state[key]["y"]      = ny
+                _state[key]["active"] = active
+            else:
+                _state[key]["active"] = False
 
 def set_reset():
     with _lock:
@@ -77,7 +113,7 @@ def set_reset():
 # ── HTTP server ───────────────────────────────────────────────────────────────
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, *_):
-        pass   # silence request logs
+        pass
 
     def do_GET(self):
         if self.path.startswith("/state"):
@@ -106,15 +142,14 @@ def run_server():
 
 # ── Perspective warp helpers ───────────────────────────────────────────────────
 def order_corners(pts):
-    """Return corners as [TL, TR, BR, BL] regardless of click order."""
     pts  = np.array(pts, dtype="float32")
     s    = pts.sum(axis=1)
     diff = np.diff(pts, axis=1)
     return np.array([
-        pts[np.argmin(s)],    # TL
-        pts[np.argmin(diff)], # TR
-        pts[np.argmax(s)],    # BR
-        pts[np.argmax(diff)], # BL
+        pts[np.argmin(s)],
+        pts[np.argmin(diff)],
+        pts[np.argmax(s)],
+        pts[np.argmax(diff)],
     ], dtype="float32")
 
 def build_transform(corners_px, out_w=800, out_h=600):
@@ -122,78 +157,133 @@ def build_transform(corners_px, out_w=800, out_h=600):
     dst = np.array([[0,0],[out_w,0],[out_w,out_h],[0,out_h]], dtype="float32")
     return cv2.getPerspectiveTransform(src, dst), out_w, out_h
 
-def warp_point(pt, M, out_w, out_h):
-    """Transform a single pixel point through perspective matrix M → (nx, ny)."""
-    v = np.array([[[pt[0], pt[1]]]], dtype="float32")
-    r = cv2.perspectiveTransform(v, M)
-    nx = float(r[0,0,0]) / out_w
-    ny = float(r[0,0,1]) / out_h
-    return nx, ny
+# ── Masking ───────────────────────────────────────────────────────────────────
+def _clean(mask):
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+    mask   = cv2.morphologyEx(mask, cv2.MORPH_OPEN,   kernel)
+    mask   = cv2.morphologyEx(mask, cv2.MORPH_DILATE, kernel)
+    return mask
 
-# ── Color/brightness masking ───────────────────────────────────────────────────
 def make_mask(frame, mode, thresh, hue_tol):
+    """Return a binary mask for BRIGHT / RED / GREEN / BLUE modes."""
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
     if mode == "BRIGHT":
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         _, mask = cv2.threshold(gray, thresh, 255, cv2.THRESH_BINARY)
     elif mode == "RED":
-        lo1 = np.array([0,     120, 70])
-        hi1 = np.array([10,    255,255])
-        lo2 = np.array([170,   120, 70])
-        hi2 = np.array([180,   255,255])
-        mask = cv2.bitwise_or(cv2.inRange(hsv, lo1, hi1),
-                               cv2.inRange(hsv, lo2, hi2))
+        lo1 = np.array([0,   120,  70]);  hi1 = np.array([10,  255, 255])
+        lo2 = np.array([170, 120,  70]);  hi2 = np.array([180, 255, 255])
+        mask = cv2.bitwise_or(cv2.inRange(hsv, lo1, hi1), cv2.inRange(hsv, lo2, hi2))
     elif mode == "GREEN":
-        mask = cv2.inRange(hsv, np.array([40,  70, 70]),
-                                np.array([80, 255,255]))
+        mask = cv2.inRange(hsv, np.array([40,  70, 70]), np.array([80,  255, 255]))
     elif mode == "BLUE":
-        mask = cv2.inRange(hsv, np.array([100, 80, 70]),
-                                np.array([130,255,255]))
-    elif mode == "CUSTOM":
-        mask = cv2.inRange(hsv, CUSTOM_HSV_LOW, CUSTOM_HSV_HIGH)
+        mask = cv2.inRange(hsv, np.array([100, 80, 70]), np.array([130, 255, 255]))
     else:
         mask = np.zeros(frame.shape[:2], dtype=np.uint8)
+    return _clean(mask)
 
-    # Clean up noise
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5,5))
-    mask   = cv2.morphologyEx(mask, cv2.MORPH_OPEN,  kernel)
-    mask   = cv2.morphologyEx(mask, cv2.MORPH_DILATE, kernel)
-    return mask
+def make_hsv_mask(frame, low, high):
+    """Return a binary mask for an arbitrary HSV range."""
+    hsv  = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+    mask = cv2.inRange(hsv, low, high)
+    return _clean(mask)
 
+# ── Centroid detection ────────────────────────────────────────────────────────
 def find_centroid(mask):
-    """Return (cx, cy) of largest contour in mask, or None."""
-    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL,
-                                        cv2.CHAIN_APPROX_SIMPLE)
+    """Return (cx, cy) of largest contour, or None."""
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     if not contours:
         return None
-    c  = max(contours, key=cv2.contourArea)
+    c = max(contours, key=cv2.contourArea)
     if cv2.contourArea(c) < 30:
         return None
-    M  = cv2.moments(c)
+    M = cv2.moments(c)
     if M["m00"] == 0:
         return None
-    return int(M["m10"]/M["m00"]), int(M["m01"]/M["m00"])
+    return int(M["m10"] / M["m00"]), int(M["m01"] / M["m00"])
 
-# ── Mouse callback (corner selection) ─────────────────────────────────────────
-_corner_mode = False
+def find_two_centroids(mask):
+    """Return (c1, c2) — the two largest contour centroids, or None each."""
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if not contours:
+        return None, None
+    contours = sorted(contours, key=cv2.contourArea, reverse=True)
+    results  = []
+    for c in contours[:2]:
+        if cv2.contourArea(c) < 30:
+            break
+        M = cv2.moments(c)
+        if M["m00"] == 0:
+            continue
+        results.append((int(M["m10"] / M["m00"]), int(M["m01"] / M["m00"])))
+    while len(results) < 2:
+        results.append(None)
+    return results[0], results[1]
 
+# ── Mouse callback ─────────────────────────────────────────────────────────────
 def on_mouse(event, x, y, flags, param):
     global _corners, _corner_mode
-    if not _corner_mode:
-        return
-    if event == cv2.EVENT_LBUTTONDOWN:
-        if len(_corners) < 4:
+    global _c1_low, _c1_high, _c2_low, _c2_high, _c1_set, _c2_set, _last_frame
+
+    # Corner-selection mode takes priority
+    if _corner_mode:
+        if event == cv2.EVENT_LBUTTONDOWN and len(_corners) < 4:
             _corners.append((x, y))
             print(f"  Corner {len(_corners)}: ({x}, {y})")
             if len(_corners) == 4:
                 _corner_mode = False
                 print("[CORNERS] All 4 set — perspective correction active.")
+        return
+
+    # CUSTOM mode: sample color under cursor
+    if _mode == "CUSTOM" and _last_frame is not None:
+        if event == cv2.EVENT_LBUTTONDOWN:
+            hsv = cv2.cvtColor(_last_frame, cv2.COLOR_BGR2HSV)
+            h, s, v = hsv[y, x]
+            _c1_low  = np.array([max(0,   int(h) - 15), max(0,   int(s) - 60), max(0,   int(v) - 60)])
+            _c1_high = np.array([min(179, int(h) + 15), 255, 255])
+            _c1_set  = True
+            print(f"[CUSTOM] Pencil 1 color → H={h} S={s} V={v}")
+        elif event == cv2.EVENT_RBUTTONDOWN:
+            hsv = cv2.cvtColor(_last_frame, cv2.COLOR_BGR2HSV)
+            h, s, v = hsv[y, x]
+            _c2_low  = np.array([max(0,   int(h) - 15), max(0,   int(s) - 60), max(0,   int(v) - 60)])
+            _c2_high = np.array([min(179, int(h) + 15), 255, 255])
+            _c2_set  = True
+            print(f"[CUSTOM] Pencil 2 color → H={h} S={s} V={v}")
+
+# ── Drawing helpers ────────────────────────────────────────────────────────────
+P1_COLOR = (0, 255, 80)    # green
+P2_COLOR = (0, 200, 255)   # cyan
+
+def draw_crosshair(display, centroid, color, label):
+    if centroid is None:
+        return
+    cx, cy = centroid
+    cv2.circle(display, (cx, cy), 14, color, 3)
+    cv2.circle(display, (cx, cy),  4, color, -1)
+    cv2.putText(display, label, (cx + 18, cy - 10),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 2)
+
+def draw_color_swatch(display, low, high, label, x, y, set_flag):
+    """Draw a small filled rectangle showing the midpoint of the HSV range."""
+    h = int((int(low[0]) + int(high[0])) / 2)
+    s = int((int(low[1]) + int(high[1])) / 2)
+    v = int((int(low[2]) + int(high[2])) / 2)
+    swatch_hsv = np.array([[[h, s, v]]], dtype=np.uint8)
+    swatch_bgr = cv2.cvtColor(swatch_hsv, cv2.COLOR_HSV2BGR)[0, 0].tolist()
+    border_col = (200, 200, 200) if not set_flag else (255, 255, 255)
+    cv2.rectangle(display, (x, y), (x + 28, y + 28), swatch_bgr, -1)
+    cv2.rectangle(display, (x, y), (x + 28, y + 28), border_col, 2)
+    cv2.putText(display, label, (x + 33, y + 20),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2, cv2.LINE_AA)
+    cv2.putText(display, label, (x + 33, y + 20),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.55, (30, 30, 30), 1, cv2.LINE_AA)
 
 # ── Main loop ──────────────────────────────────────────────────────────────────
 def main():
-    global _corners, _corner_mode, _mode, _thresh
+    global _corners, _corner_mode, _mode, _thresh, _last_frame
 
-    # Start HTTP server in background thread
     t = threading.Thread(target=run_server, daemon=True)
     t.start()
 
@@ -209,15 +299,16 @@ def main():
     cv2.resizeWindow(WINDOW_NAME, 1280, 720)
     cv2.setMouseCallback(WINDOW_NAME, on_mouse)
 
-    M_warp  = None
-    out_w   = 800
-    out_h   = 600
+    M_warp = None
+    out_w  = 800
+    out_h  = 600
 
-    print("\n=== Comically Large Paintbrush — Tracker ===")
+    print("\n=== Comically Large Paintbrush — Tracker (dual-point) ===")
     print(f"  HTTP state endpoint: http://localhost:{PORT}/state")
-    print("  Press C in the window to select canvas corners.")
-    print("  Press M to cycle tracking mode.")
-    print("  Press Q or ESC to quit.\n")
+    print("  C = select canvas corners")
+    print("  M = cycle tracking mode")
+    print("  In CUSTOM mode: left-click = Pencil 1 color, right-click = Pencil 2 color")
+    print("  Q / ESC = quit\n")
 
     while True:
         ret, frame = cap.read()
@@ -229,57 +320,67 @@ def main():
         if FLIP_H:
             frame = cv2.flip(frame, 1)
 
-        display = frame.copy()
+        _last_frame = frame   # expose to mouse callback
+        display     = frame.copy()
 
-        # ── Rebuild warp matrix when corners change ──────────────────────────
+        # Rebuild warp matrix when corners become available
         if len(_corners) == 4 and M_warp is None:
             M_warp, out_w, out_h = build_transform(_corners)
 
         # ── Track ─────────────────────────────────────────────────────────────
-        mask     = make_mask(frame, _mode, _thresh, _hue_tol)
-        centroid = find_centroid(mask)
-
-        if centroid:
-            cx, cy = centroid
-            if M_warp is not None:
-                nx, ny   = warp_point((cx, cy), M_warp, out_w, out_h)
-                nx        = max(0.0, min(1.0, nx))
-                ny        = max(0.0, min(1.0, ny))
-                in_canvas = 0.0 <= nx <= 1.0 and 0.0 <= ny <= 1.0
-            else:
-                h, w     = frame.shape[:2]
-                nx, ny   = cx/w, cy/h
-                in_canvas = True
-
-            set_point(nx, ny, in_canvas)
-            cv2.circle(display, (cx, cy), 14, (0,255,0), 3)
-            cv2.circle(display, (cx, cy),  4, (0,255,0), -1)
-            label = f"({nx:.3f}, {ny:.3f})"
-            cv2.putText(display, label, (cx+18, cy-10),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0,255,0), 2)
+        if _mode == "CUSTOM":
+            mask1    = make_hsv_mask(frame, _c1_low, _c1_high)
+            mask2    = make_hsv_mask(frame, _c2_low, _c2_high)
+            c1       = find_centroid(mask1)
+            c2       = find_centroid(mask2)
+            disp_mask = cv2.bitwise_or(mask1, mask2)
         else:
-            set_point(0.5, 0.5, False)
+            mask      = make_mask(frame, _mode, _thresh, _hue_tol)
+            c1, c2    = find_two_centroids(mask)
+            disp_mask = mask
 
-        # ── Draw corners & canvas outline ─────────────────────────────────────
+        set_points(c1, c2, M_warp, out_w, out_h, frame.shape)
+
+        # ── Retrieve normalised coords for display labels ──────────────────────
+        with _lock:
+            s1, s2 = dict(_state["p1"]), dict(_state["p2"])
+
+        # ── Draw crosshairs ────────────────────────────────────────────────────
+        lbl1 = f"P1 ({s1['x']:.3f}, {s1['y']:.3f})" if c1 else "P1"
+        lbl2 = f"P2 ({s2['x']:.3f}, {s2['y']:.3f})" if c2 else "P2"
+        draw_crosshair(display, c1, P1_COLOR,  lbl1)
+        draw_crosshair(display, c2, P2_COLOR,  lbl2)
+
+        # ── Canvas corners & outline ───────────────────────────────────────────
         for i, pt in enumerate(_corners):
-            col = [(0,200,255),(0,200,255),(0,200,255),(0,200,255)]
-            cv2.circle(display, pt, 8, col[i], -1)
-            cv2.putText(display, ["TL","TR","BR","BL"][i] if len(_corners)==4
-                        else str(i+1),
-                        (pt[0]+10, pt[1]-10),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,200,255), 2)
+            cv2.circle(display, pt, 8, (0, 200, 255), -1)
+            label_txt = ["TL","TR","BR","BL"][i] if len(_corners) == 4 else str(i + 1)
+            cv2.putText(display, label_txt, (pt[0]+10, pt[1]-10),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 200, 255), 2)
 
         if len(_corners) == 4:
             pts = order_corners(_corners).astype(int)
-            cv2.polylines(display, [pts], True, (0,200,255), 2)
+            cv2.polylines(display, [pts], True, (0, 200, 255), 2)
 
         if _corner_mode:
             cv2.putText(display,
                         f"CLICK CORNER {len(_corners)+1}/4  (TL → TR → BR → BL)",
-                        (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0,120,255), 2)
+                        (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 120, 255), 2)
+
+        # ── CUSTOM mode color-swatch overlay ──────────────────────────────────
+        if _mode == "CUSTOM":
+            cv2.putText(display,
+                        "CUSTOM: Left-click=Pencil1  Right-click=Pencil2",
+                        (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (200, 200, 0), 2)
+            draw_color_swatch(display, _c1_low, _c1_high,
+                              "Pencil 1" + (" (set)" if _c1_set else " (default)"),
+                              20, 70, _c1_set)
+            draw_color_swatch(display, _c2_low, _c2_high,
+                              "Pencil 2" + (" (set)" if _c2_set else " (default)"),
+                              20, 110, _c2_set)
 
         # ── HUD ───────────────────────────────────────────────────────────────
-        warp_str = "ON" if M_warp is not None else "OFF (press C to set corners)"
+        warp_str = "ON" if M_warp is not None else "OFF (press C)"
         hud = [
             f"Mode: {_mode}  |  Threshold: {_thresh}",
             f"Perspective warp: {warp_str}",
@@ -288,15 +389,13 @@ def main():
         ]
         for i, line in enumerate(hud):
             cv2.putText(display, line, (10, display.shape[0]-20-i*26),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255,255,255), 2,
-                        cv2.LINE_AA)
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255,255,255), 2, cv2.LINE_AA)
             cv2.putText(display, line, (10, display.shape[0]-20-i*26),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.55, (30,30,30), 1,
-                        cv2.LINE_AA)
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.55, (30,30,30),  1, cv2.LINE_AA)
 
-        # Small mask preview (top-right corner)
+        # ── Mask preview (top-right) ───────────────────────────────────────────
         mh, mw   = 120, 160
-        mask_rgb = cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR)
+        mask_rgb = cv2.cvtColor(disp_mask, cv2.COLOR_GRAY2BGR)
         mask_sm  = cv2.resize(mask_rgb, (mw, mh))
         display[10:10+mh, display.shape[1]-mw-10:display.shape[1]-10] = mask_sm
         cv2.putText(display, "MASK", (display.shape[1]-mw-10+4, 8+mh),
@@ -312,10 +411,9 @@ def main():
             _corners     = []
             M_warp       = None
             _corner_mode = True
-            print("[CORNERS] Click 4 corners in the webcam window: TL → TR → BR → BL")
+            print("[CORNERS] Click 4 corners: TL → TR → BR → BL")
         elif key == ord('m'):
-            idx   = (MODES.index(_mode) + 1) % len(MODES)
-            _mode = MODES[idx]
+            _mode = MODES[(MODES.index(_mode) + 1) % len(MODES)]
             print(f"[MODE] {_mode}")
         elif key == ord('['):
             _thresh = max(0, _thresh - 10)
