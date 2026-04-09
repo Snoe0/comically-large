@@ -14,6 +14,10 @@ Controls (OpenCV window)
 ------------------------
   C          — enter corner-selection mode (click 4 corners of the canvas
                in order: top-left, top-right, bottom-right, bottom-left)
+  B          — enter button-region calibration (click 4 corners per button
+               in this order: p1_large, p1_medium, p1_small, p1_undo,
+               p2_large, p2_medium, p2_small, p2_undo)
+               Hold a pencil over a calibrated region for ~1.5 s to trigger it.
   M          — cycle tracking mode: BRIGHT | RED | GREEN | BLUE | CUSTOM
   [ / ]      — decrease / increase brightness/HSV threshold
   R          — reset all strokes (sends reset event to game)
@@ -51,9 +55,10 @@ MODES = ["BRIGHT", "RED", "GREEN", "BLUE", "CUSTOM"]
 # ── Shared state (thread-safe via lock) ────────────────────────────────────────
 _lock  = threading.Lock()
 _state = {
-    "p1":    {"x": 0.5, "y": 0.5, "active": False},
-    "p2":    {"x": 0.5, "y": 0.5, "active": False},
-    "reset": False,
+    "p1":      {"x": 0.5, "y": 0.5, "active": False},
+    "p2":      {"x": 0.5, "y": 0.5, "active": False},
+    "reset":   False,
+    "buttons": [],   # button names fired this tick; consumed by get_state()
 }
 _corners     = []
 _mode        = "BRIGHT"
@@ -68,6 +73,22 @@ _c2_high = np.array([85,  255, 255])
 _c1_set  = False                        # True once user has clicked a color
 _c2_set  = False
 
+# ── Button region calibration ──────────────────────────────────────────────────
+# Each button gets its own perspective transform built from 4 camera-pixel
+# corners (which may be a trapezoid due to camera angle).  A centroid is
+# "inside" a button when its warped coordinate lands in the unit square [0,1]².
+# Fires immediately on the first frame the point enters; won't re-fire until
+# the point leaves and re-enters.
+BUTTON_NAMES = [
+    "p1_large", "p1_medium", "p1_small", "p1_undo",
+    "p2_large", "p2_medium", "p2_small", "p2_undo",
+]
+_button_regions     = {}          # name → (M_btn, cam_corners) perspective matrix + display pts
+_button_setup_mode  = False
+_button_setup_idx   = 0           # index into BUTTON_NAMES
+_button_setup_pts   = []          # corners clicked so far for current button (up to 4)
+_button_locked      = {n: False for n in BUTTON_NAMES}  # True while centroid is still inside
+
 # Latest frame shared with mouse callback for color picking
 _last_frame  = None
 _corner_mode = False
@@ -75,11 +96,13 @@ _corner_mode = False
 def get_state():
     with _lock:
         s = {
-            "p1":    dict(_state["p1"]),
-            "p2":    dict(_state["p2"]),
-            "reset": _state["reset"],
+            "p1":      dict(_state["p1"]),
+            "p2":      dict(_state["p2"]),
+            "reset":   _state["reset"],
+            "buttons": list(_state["buttons"]),
         }
-        _state["reset"] = False
+        _state["reset"]   = False
+        _state["buttons"] = []
     return s
 
 def set_points(c1, c2, M_warp, out_w, out_h, frame_shape):
@@ -93,9 +116,7 @@ def set_points(c1, c2, M_warp, out_w, out_h, frame_shape):
                     r  = cv2.perspectiveTransform(v, M_warp)
                     nx = float(r[0, 0, 0]) / out_w
                     ny = float(r[0, 0, 1]) / out_h
-                    nx = max(0.0, min(1.0, nx))
-                    ny = max(0.0, min(1.0, ny))
-                    active = True
+                    active = 0.0 <= nx <= 1.0 and 0.0 <= ny <= 1.0
                 else:
                     h, w   = frame_shape[:2]
                     nx, ny = cx / w, cy / h
@@ -105,6 +126,31 @@ def set_points(c1, c2, M_warp, out_w, out_h, frame_shape):
                 _state[key]["active"] = active
             else:
                 _state[key]["active"] = False
+
+def _point_in_button(M_btn, cx, cy):
+    """Return True if (cx, cy) maps into the unit square via M_btn."""
+    v = np.array([[[cx, cy]]], dtype="float32")
+    r = cv2.perspectiveTransform(v, M_btn)
+    u, v_ = float(r[0, 0, 0]), float(r[0, 0, 1])
+    return 0.0 <= u <= 1.0 and 0.0 <= v_ <= 1.0
+
+def check_button_hits(raw_centroids):
+    """Fire a button the instant a centroid enters its region. Re-arms on exit."""
+    global _button_locked
+    if not _button_regions:
+        return
+    with _lock:
+        for name, (M_btn, _) in _button_regions.items():
+            inside = any(
+                c and _point_in_button(M_btn, c[0], c[1])
+                for c in raw_centroids
+            )
+            if inside:
+                if not _button_locked[name]:
+                    _state["buttons"].append(name)
+                    _button_locked[name] = True
+            else:
+                _button_locked[name] = False
 
 def set_reset():
     with _lock:
@@ -224,8 +270,9 @@ def find_two_centroids(mask):
 def on_mouse(event, x, y, flags, param):
     global _corners, _corner_mode
     global _c1_low, _c1_high, _c2_low, _c2_high, _c1_set, _c2_set, _last_frame
+    global _button_setup_mode, _button_setup_idx, _button_setup_pts, _button_regions
 
-    # Corner-selection mode takes priority
+    # Canvas corner-selection mode takes priority
     if _corner_mode:
         if event == cv2.EVENT_LBUTTONDOWN and len(_corners) < 4:
             _corners.append((x, y))
@@ -233,6 +280,29 @@ def on_mouse(event, x, y, flags, param):
             if len(_corners) == 4:
                 _corner_mode = False
                 print("[CORNERS] All 4 set — perspective correction active.")
+        return
+
+    # Button region setup mode — collect 4 corners per button
+    if _button_setup_mode:
+        if event == cv2.EVENT_LBUTTONDOWN:
+            _button_setup_pts.append((x, y))
+            name = BUTTON_NAMES[_button_setup_idx]
+            n = len(_button_setup_pts)
+            print(f"  [{name}] Corner {n}/4: ({x}, {y})")
+            if n == 4:
+                src = order_corners(_button_setup_pts)
+                dst = np.array([[0,0],[1,0],[1,1],[0,1]], dtype="float32")
+                M_btn = cv2.getPerspectiveTransform(src, dst)
+                _button_regions[name] = (M_btn, [tuple(p) for p in src.astype(int).tolist()])
+                print(f"  [{name}] Region set from corners: {_button_setup_pts}")
+                _button_setup_pts = []
+                _button_setup_idx += 1
+                if _button_setup_idx >= len(BUTTON_NAMES):
+                    _button_setup_mode = False
+                    _button_setup_idx  = 0
+                    print("[BUTTONS] All button regions calibrated.")
+                else:
+                    print(f"  Next: click 4 corners for [{BUTTON_NAMES[_button_setup_idx]}]")
         return
 
     # CUSTOM mode: sample color under cursor
@@ -283,6 +353,7 @@ def draw_color_swatch(display, low, high, label, x, y, set_flag):
 # ── Main loop ──────────────────────────────────────────────────────────────────
 def main():
     global _corners, _corner_mode, _mode, _thresh, _last_frame
+    global _button_setup_mode, _button_setup_idx, _button_setup_pts, _button_regions
 
     t = threading.Thread(target=run_server, daemon=True)
     t.start()
@@ -305,7 +376,8 @@ def main():
 
     print("\n=== Comically Large Paintbrush — Tracker (dual-point) ===")
     print(f"  HTTP state endpoint: http://localhost:{PORT}/state")
-    print("  C = select canvas corners")
+    print("  C = select canvas corners (4 clicks)")
+    print("  B = calibrate button regions (4 clicks per button × 8 buttons)")
     print("  M = cycle tracking mode")
     print("  In CUSTOM mode: left-click = Pencil 1 color, right-click = Pencil 2 color")
     print("  Q / ESC = quit\n")
@@ -340,6 +412,7 @@ def main():
             disp_mask = mask
 
         set_points(c1, c2, M_warp, out_w, out_h, frame.shape)
+        check_button_hits([c1, c2])
 
         # ── Retrieve normalised coords for display labels ──────────────────────
         with _lock:
@@ -362,6 +435,25 @@ def main():
             pts = order_corners(_corners).astype(int)
             cv2.polylines(display, [pts], True, (0, 200, 255), 2)
 
+        # ── Button region overlays ────────────────────────────────────────────
+        for name, (_, cam_corners) in _button_regions.items():
+            color = (255, 200, 0) if _button_locked.get(name) else (0, 255, 200)
+            pts = np.array(cam_corners, dtype=np.int32)
+            cv2.polylines(display, [pts], True, color, 2)
+            cx = int(sum(p[0] for p in cam_corners) / 4)
+            cy = int(sum(p[1] for p in cam_corners) / 4)
+            cv2.putText(display, name, (cx - 30, cy + 6),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, 1, cv2.LINE_AA)
+
+        if _button_setup_mode:
+            name = BUTTON_NAMES[_button_setup_idx]
+            n    = len(_button_setup_pts)
+            cv2.putText(display,
+                        f"BUTTON SETUP [{_button_setup_idx+1}/{len(BUTTON_NAMES)}] {name}  —  Click corner {n+1}/4",
+                        (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (0, 255, 120), 2)
+            for pt in _button_setup_pts:
+                cv2.circle(display, pt, 6, (0, 255, 120), -1)
+
         if _corner_mode:
             cv2.putText(display,
                         f"CLICK CORNER {len(_corners)+1}/4  (TL → TR → BR → BL)",
@@ -380,12 +472,13 @@ def main():
                               20, 110, _c2_set)
 
         # ── HUD ───────────────────────────────────────────────────────────────
-        warp_str = "ON" if M_warp is not None else "OFF (press C)"
+        warp_str  = "ON" if M_warp is not None else "OFF (press C)"
+        btn_str   = f"{len(_button_regions)}/{len(BUTTON_NAMES)} set"
         hud = [
             f"Mode: {_mode}  |  Threshold: {_thresh}",
-            f"Perspective warp: {warp_str}",
+            f"Perspective warp: {warp_str}  |  Buttons: {btn_str}",
             f"HTTP: localhost:{PORT}/state",
-            "C=corners  M=mode  [/]=thresh  R=reset  Q=quit",
+            "C=corners  B=buttons  M=mode  [/]=thresh  R=reset  Q=quit",
         ]
         for i, line in enumerate(hud):
             cv2.putText(display, line, (10, display.shape[0]-20-i*26),
@@ -421,6 +514,14 @@ def main():
         elif key == ord(']'):
             _thresh = min(255, _thresh + 10)
             print(f"[THRESH] {_thresh}")
+        elif key == ord('b'):
+            _button_regions.clear()
+            _button_setup_mode = True
+            _button_setup_idx  = 0
+            _button_setup_pts  = []
+            for n in BUTTON_NAMES:
+                _button_locked[n] = False
+            print(f"[BUTTONS] Setup mode — click 4 corners for [{BUTTON_NAMES[0]}]")
         elif key == ord('r'):
             set_reset()
             print("[RESET] Sent reset to game.")

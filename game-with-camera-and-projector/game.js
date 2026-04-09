@@ -9,7 +9,6 @@ kaplay({
   height: 600,
   background: [255, 255, 255],
   stretch: true,
-  letterbox: true,
 });
 
 const LINE_SPACING = 32;
@@ -18,8 +17,8 @@ const MARGIN_COLOR = [230, 100, 100];
 const DIVIDER_X    = width() / 2;
 
 const playerState = {
-  1: { brushSize: 8, opacity: 1, halftone: "none", strokes: [] },
-  2: { brushSize: 8, opacity: 1, halftone: "none", strokes: [] },
+  1: { brushSize: 16, opacity: 1, strokes: [] },
+  2: { brushSize: 16, opacity: 1, strokes: [] },
 };
 
 let currentStroke        = null;
@@ -38,39 +37,21 @@ function drawDivider() {
   drawLine({ p1:vec2(DIVIDER_X,0), p2:vec2(DIVIDER_X,height()), width:2, color:rgb(120,120,140) });
 }
 
-// ─── Timer + wave ─────────────────────────────────────────────────────────────
-const TOTAL_TIME = 180;
+// ─── Timer ─────────────────────────────────────────────────────────────
+const TOTAL_TIME = 90;
 let timeLeft     = TOTAL_TIME;
 
-const wavePath   = document.querySelector(".wave path");
-const pathLength = wavePath.getTotalLength();
-wavePath.style.strokeDasharray  = pathLength;
-wavePath.style.strokeDashoffset = pathLength;
+const timerDisplay = document.querySelector(".timer-display");
 
-const promptLabel = add([
-  text("Draw: A Cat!", { size:28 }),
-  pos(width()/2, 30),
-  anchor("top"),
-  color(233,69,96),
-  fixed(), z(10),
-]);
-
-const timerLabel = add([
-  text("3:00", { size:22 }),
-  pos(width()/2, 68),
-  anchor("top"),
-  color(80,80,80),
-  fixed(), z(10),
-]);
 
 const timerInterval = setInterval(() => {
   timeLeft--;
   if (timeLeft <= 0) { timeLeft = 0; clearInterval(timerInterval); }
   const mins = Math.floor(timeLeft/60);
   const secs = timeLeft % 60;
-  timerLabel.text = `${mins}:${secs.toString().padStart(2,"0")}`;
+  const timeStr = `${mins}:${secs.toString().padStart(2,"0")}`;
+  timerDisplay.textContent = timeStr;
   const elapsed = (TOTAL_TIME-timeLeft)/TOTAL_TIME;
-  wavePath.style.strokeDashoffset = pathLength*(1-elapsed);
 }, 1000);
 
 // ─── Canvas side helpers ──────────────────────────────────────────────────────
@@ -81,45 +62,7 @@ function clampToSide(point, side) {
   return vec2(x, point.y);
 }
 
-// ─── Halftone drawing ─────────────────────────────────────────────────────────
-function drawHalftoneSegment(p1,p2,strokeWidth,col,opacity,halftone) {
-  const c = rgb(col[0],col[1],col[2]);
-  if (halftone==="none") {
-    drawLine({p1,p2,width:strokeWidth,color:c,opacity,cap:"round"});
-    return;
-  }
-  const dx=p2.x-p1.x, dy=p2.y-p1.y;
-  const dist=Math.sqrt(dx*dx+dy*dy);
-  if (dist<0.5) return;
-  const spacing=halftone==="dots"?4:3;
-  const steps=Math.max(1,Math.floor(dist/spacing));
-  for (let s=0;s<=steps;s++) {
-    const t=s/steps, cx=p1.x+dx*t, cy=p1.y+dy*t;
-    if (halftone==="dots") {
-      const gx=Math.round(cx/5)*5, gy=Math.round(cy/5)*5;
-      if (Math.abs(cx-gx)+Math.abs(cy-gy)<3)
-        drawCircle({pos:vec2(gx,gy),radius:Math.min(strokeWidth/3,3),color:c,opacity});
-    } else if (halftone==="lines") {
-      const lineY=Math.round(cy/4)*4;
-      if (Math.abs(cy-lineY)<1.5)
-        drawLine({p1:vec2(cx-strokeWidth/2,lineY),p2:vec2(cx+strokeWidth/2,lineY),width:1.5,color:c,opacity});
-    } else if (halftone==="cross") {
-      const lineY=Math.round(cy/5)*5, lineX=Math.round(cx/5)*5;
-      if (Math.abs(cy-lineY)<1.5)
-        drawLine({p1:vec2(cx-strokeWidth/2,lineY),p2:vec2(cx+strokeWidth/2,lineY),width:1,color:c,opacity});
-      if (Math.abs(cx-lineX)<1.5)
-        drawLine({p1:vec2(lineX,cy-strokeWidth/2),p2:vec2(lineX,cy+strokeWidth/2),width:1,color:c,opacity});
-    }
-  }
-}
-
-function drawHalftoneCircle(center,radius,col,opacity,halftone) {
-  const c=rgb(col[0],col[1],col[2]);
-  if (halftone==="none") { drawCircle({pos:center,radius,color:c,opacity}); return; }
-  drawCircle({pos:center,radius,color:c,opacity:opacity*0.5});
-}
-
-// ─── Mouse drawing (unchanged) ────────────────────────────────────────────────
+// ─── Mouse drawing ────────────────────────────────────────────────────────────
 onMousePress(() => {
   const mp   = mousePos();
   const side = mp.x < DIVIDER_X ? "left" : "right";
@@ -130,7 +73,6 @@ onMousePress(() => {
     color:strokeColor,
     size:playerState[player].brushSize,
     opacity:playerState[player].opacity,
-    halftone:playerState[player].halftone,
     side, player,
   };
   playerState[player].strokes.push(currentStroke);
@@ -170,8 +112,17 @@ function handleTrackerPoint(point, playerOverride) {
     return;
   }
 
-  const gx = point.x * width();
-  const gy = point.y * height();
+  const rawGx = point.x * width();
+  const gy    = point.y * height();
+
+  // If the point is off-canvas or on the wrong side, end the stroke — no clamping
+  const onCorrectSide = playerOverride === 1 ? rawGx < DIVIDER_X : rawGx >= DIVIDER_X;
+  if (!onCorrectSide || point.x < 0 || point.x > 1 || point.y < 0 || point.y > 1) {
+    trackerStroke[playerOverride] = null;
+    return;
+  }
+
+  const gx = rawGx;
   const pt = vec2(gx, gy);
 
   const player = playerOverride;
@@ -183,7 +134,6 @@ function handleTrackerPoint(point, playerOverride) {
       color:  strokeColor,
       size:   playerState[player].brushSize,
       opacity: playerState[player].opacity,
-      halftone: playerState[player].halftone,
       side: player === 1 ? "left" : "right",
       player,
     };
@@ -209,6 +159,20 @@ async function pollTracker() {
       playerState[2].strokes = [];
       trackerStroke[1] = null;
       trackerStroke[2] = null;
+    }
+
+    // Fire any button presses triggered by dwell in tracker
+    if (data.buttons) {
+      const sizeMap = { large: "28", medium: "16", small: "8" };
+      for (const btn of data.buttons) {
+        const [pStr, action] = btn.split("_");
+        const player = pStr === "p1" ? "1" : "2";
+        if (action === "undo") {
+          document.querySelector(`.undo-btn[data-player="${player}"]`)?.click();
+        } else if (sizeMap[action]) {
+          document.querySelector(`.brush-btn[data-player="${player}"][data-size="${sizeMap[action]}"]`)?.click();
+        }
+      }
     }
 
     trackerP1 = data.p1 ?? { x:0.5, y:0.5, active:false };
@@ -249,17 +213,17 @@ setInterval(() => {
 
 // ─── Render ───────────────────────────────────────────────────────────────────
 onDraw(() => {
-  drawRuledLines();
   drawDivider();
 
   const allStrokes = [...playerState[1].strokes, ...playerState[2].strokes];
   for (const stroke of allStrokes) {
-    if (stroke.points.length===1) {
-      drawHalftoneCircle(stroke.points[0],stroke.size/2,stroke.color,stroke.opacity,stroke.halftone);
+    const c = rgb(stroke.color[0], stroke.color[1], stroke.color[2]);
+    if (stroke.points.length === 1) {
+      drawCircle({ pos: stroke.points[0], radius: stroke.size / 2, color: c, opacity: stroke.opacity });
       continue;
     }
-    for (let i=1;i<stroke.points.length;i++) {
-      drawHalftoneSegment(stroke.points[i-1],stroke.points[i],stroke.size,stroke.color,stroke.opacity,stroke.halftone);
+    for (let i = 1; i < stroke.points.length; i++) {
+      drawLine({ p1: stroke.points[i-1], p2: stroke.points[i], width: stroke.size, color: c, opacity: stroke.opacity, cap: "round" });
     }
   }
 
@@ -281,22 +245,12 @@ onDraw(() => {
   }
 });
 
-// ─── Sidebar buttons (unchanged) ──────────────────────────────────────────────
-document.querySelectorAll(".size-btn").forEach(btn => {
+// ─── Sidebar buttons ──────────────────────────────────────────────────────────
+document.querySelectorAll(".brush-btn").forEach(btn => {
   btn.addEventListener("click", () => {
     const player=btn.dataset.player, size=Number(btn.dataset.size);
     playerState[player].brushSize=size;
-    btn.closest(".size-buttons").querySelectorAll(".size-btn").forEach(b=>b.classList.remove("active"));
-    btn.classList.add("active");
-  });
-});
-
-
-document.querySelectorAll(".halftone-btn").forEach(btn => {
-  btn.addEventListener("click", () => {
-    const player=btn.dataset.player;
-    playerState[player].halftone=btn.dataset.halftone;
-    btn.closest(".halftone-buttons").querySelectorAll(".halftone-btn").forEach(b=>b.classList.remove("active"));
+    btn.closest(".brush-size-group").querySelectorAll(".brush-btn").forEach(b=>b.classList.remove("active"));
     btn.classList.add("active");
   });
 });

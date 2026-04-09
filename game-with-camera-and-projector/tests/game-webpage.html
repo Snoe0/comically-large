@@ -1,0 +1,522 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Comically Large - Game</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Fredoka+One&display=swap');
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  :root {
+    --black: #000;
+    --white: #fff;
+    --border-thick: 7px;
+    --border-timer: 10px;
+    --font-game: 'Fredoka One', 'ImaginaryFriend BB', cursive;
+  }
+
+  body {
+    width: 1920px;
+    height: 1080px;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 40px;
+    gap: 40px;
+    position: relative;
+    background: #fff;
+    font-family: var(--font-game);
+  }
+
+  /* Background */
+  .background {
+    position: absolute;
+    inset: 0;
+    background:
+      radial-gradient(ellipse at 0% 50%, #ff3300cc 0%, transparent 40%),
+      radial-gradient(ellipse at 100% 50%, #3300ffcc 0%, transparent 40%),
+      #1a0a2e;
+    z-index: 0;
+  }
+
+  /* Halftone dot pattern overlay */
+  .background::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background-image: radial-gradient(circle, rgba(255,255,255,0.7) 1.5px, transparent 1.5px);
+    background-size: 18px 18px;
+    z-index: 1;
+    opacity: 0.5;
+    mask-image: radial-gradient(ellipse at 0% 50%, black 0%, transparent 45%),
+                radial-gradient(ellipse at 100% 50%, black 0%, transparent 45%);
+    mask-composite: add;
+    -webkit-mask-image: radial-gradient(ellipse at 0% 50%, black 0%, transparent 45%),
+                        radial-gradient(ellipse at 100% 50%, black 0%, transparent 45%);
+    -webkit-mask-composite: source-over;
+  }
+
+  /* Timer */
+  .timer {
+    position: relative;
+    z-index: 2;
+    background: var(--white);
+    border: var(--border-timer) solid var(--black);
+    border-radius: 1px 6px 6px 6px;
+    width: 423px;
+    height: 92px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+
+  .timer-text {
+    font-family: var(--font-game);
+    font-size: 69px;
+    font-weight: 900;
+    color: var(--black);
+    line-height: 1;
+    letter-spacing: -1px;
+  }
+
+  /* Main layout */
+  .everything {
+    position: relative;
+    z-index: 2;
+    display: flex;
+    gap: 26px;
+    align-items: flex-start;
+    flex-shrink: 0;
+  }
+
+  /* Sidebar button groups */
+  .side-buttons {
+    display: flex;
+    flex-direction: column;
+    width: 214px;
+    height: 846px;
+    justify-content: space-between;
+    flex-shrink: 0;
+  }
+
+  /* Regular bordered button */
+  .stroke-btn {
+    background: var(--white);
+    border: var(--border-thick) solid var(--black);
+    border-radius: 4px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 44px;
+    padding: 43px 47px;
+    width: 100%;
+    cursor: pointer;
+    position: relative;
+    flex-shrink: 0;
+    transition: transform 0.08s ease, box-shadow 0.08s ease;
+    box-shadow: 4px 4px 0px var(--black);
+  }
+
+  .stroke-btn:hover {
+    transform: translate(-2px, -2px);
+    box-shadow: 6px 6px 0px var(--black);
+  }
+
+  .stroke-btn:active {
+    transform: translate(2px, 2px);
+    box-shadow: 2px 2px 0px var(--black);
+  }
+
+  /* Stroke preview lines */
+  .stroke-preview {
+    width: 114px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+
+  .stroke-large {
+    height: 21px;
+    border-radius: 10px;
+    background: var(--black);
+    width: 100%;
+  }
+
+  .stroke-medium {
+    height: 11px;
+    border-radius: 6px;
+    background: var(--black);
+    width: 100%;
+  }
+
+  .stroke-small {
+    height: 5px;
+    border-radius: 3px;
+    background: var(--black);
+    width: 100%;
+  }
+
+  /* Stroke btn label */
+  .btn-label {
+    font-family: var(--font-game);
+    font-size: 28px;
+    font-weight: 700;
+    color: var(--black);
+    text-transform: uppercase;
+    white-space: nowrap;
+    letter-spacing: 0.5px;
+  }
+
+  /* Diagonal/angled button (Small and Undo) */
+  .angled-btn {
+    position: relative;
+    width: 214px;
+    flex-shrink: 0;
+    cursor: pointer;
+    transition: transform 0.08s ease;
+  }
+
+  .angled-btn:hover { transform: scale(1.02); }
+  .angled-btn:active { transform: scale(0.98); }
+
+  /* Small stroke button – angled top-right */
+  .small-btn {
+    height: 179px;
+  }
+
+  .small-btn .angled-bg {
+    position: absolute;
+    inset: 0;
+    background: var(--white);
+    clip-path: polygon(0 0, 100% 14%, 100% 100%, 0 100%);
+    border: var(--border-thick) solid var(--black);
+  }
+
+  /* Undo button – angled top-left */
+  .undo-btn {
+    height: 255px;
+  }
+
+  .undo-btn .angled-bg {
+    position: absolute;
+    inset: 0;
+    background: var(--white);
+    clip-path: polygon(0 14%, 100% 0, 100% 100%, 0 100%);
+    border: var(--border-thick) solid var(--black);
+  }
+
+  /* For right panel: Small mirrors horizontally */
+  .right-panel .small-btn .angled-bg {
+    clip-path: polygon(0 14%, 100% 0, 100% 100%, 0 100%);
+  }
+
+  .right-panel .undo-btn .angled-bg {
+    clip-path: polygon(0 0, 100% 14%, 100% 100%, 0 100%);
+  }
+
+  /* Angled button content */
+  .angled-content {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-end;
+    padding-bottom: 28px;
+    gap: 14px;
+  }
+
+  .undo-icon {
+    font-size: 48px;
+    line-height: 1;
+    color: var(--black);
+    transform: rotate(-15deg);
+    display: block;
+  }
+
+  /* Arrow SVG for undo */
+  .undo-arrow {
+    width: 65px;
+    height: 65px;
+    position: absolute;
+    top: 33%;
+    left: 50%;
+    transform: translateX(-50%);
+  }
+
+  .small-stroke-line {
+    width: 109px;
+    height: 5px;
+    border-radius: 3px;
+    background: var(--black);
+    position: absolute;
+    top: 50px;
+    left: 50%;
+    transform: translateX(-50%);
+  }
+
+  /* Canvas area */
+  .canvas-area {
+    width: 1223px;
+    height: 846px;
+    background: var(--white);
+    border: var(--border-thick) solid var(--black);
+    position: relative;
+    flex-shrink: 0;
+    cursor: crosshair;
+  }
+
+  /* Dashed center line */
+  .canvas-area::after {
+    content: '';
+    position: absolute;
+    left: 50%;
+    top: 0;
+    bottom: 0;
+    border-left: 3px dashed #aaa;
+    transform: translateX(-50%);
+  }
+
+  /* Canvas element inside */
+  .drawing-canvas {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+  }
+
+  /* Angled button custom SVG shape via CSS */
+  .angled-btn-shape {
+    position: absolute;
+    inset: 0;
+    overflow: visible;
+  }
+</style>
+</head>
+<body>
+
+<div class="background"></div>
+
+<!-- Timer -->
+<div class="timer">
+  <span class="timer-text">1:00</span>
+</div>
+
+<!-- Main content -->
+<div class="everything">
+
+  <!-- Left side buttons -->
+  <div class="side-buttons" id="left-panel">
+
+    <!-- Large stroke btn -->
+    <button class="stroke-btn" onclick="setStroke('large', 'left')">
+      <div class="stroke-preview">
+        <div class="stroke-large"></div>
+      </div>
+      <span class="btn-label">Large</span>
+    </button>
+
+    <!-- Medium stroke btn -->
+    <button class="stroke-btn" onclick="setStroke('medium', 'left')">
+      <div class="stroke-preview">
+        <div class="stroke-medium"></div>
+      </div>
+      <span class="btn-label">Medium</span>
+    </button>
+
+    <!-- Small stroke btn (angled) -->
+    <div class="angled-btn small-btn" onclick="setStroke('small', 'left')">
+      <div class="angled-bg"></div>
+      <div class="small-stroke-line"></div>
+      <div class="angled-content">
+        <span class="btn-label">Small</span>
+      </div>
+    </div>
+
+    <!-- Undo btn (angled) -->
+    <div class="angled-btn undo-btn" onclick="undo('left')">
+      <div class="angled-bg"></div>
+      <!-- Arrow icon -->
+      <svg class="undo-arrow" viewBox="0 0 65 65" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M50 20 Q30 5 15 25 Q8 35 15 45" stroke="black" stroke-width="7" stroke-linecap="round" fill="none"/>
+        <path d="M10 38 L15 48 L24 42" stroke="black" stroke-width="7" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+      </svg>
+      <div class="angled-content">
+        <span class="btn-label">Undo</span>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Canvas -->
+  <div class="canvas-area">
+    <canvas class="drawing-canvas" id="drawingCanvas"></canvas>
+  </div>
+
+  <!-- Right side buttons -->
+  <div class="side-buttons right-panel" id="right-panel">
+
+    <button class="stroke-btn" onclick="setStroke('large', 'right')">
+      <div class="stroke-preview">
+        <div class="stroke-large"></div>
+      </div>
+      <span class="btn-label">Large</span>
+    </button>
+
+    <button class="stroke-btn" onclick="setStroke('medium', 'right')">
+      <div class="stroke-preview">
+        <div class="stroke-medium"></div>
+      </div>
+      <span class="btn-label">Medium</span>
+    </button>
+
+    <div class="angled-btn small-btn right-panel" onclick="setStroke('small', 'right')">
+      <div class="angled-bg"></div>
+      <div class="small-stroke-line"></div>
+      <div class="angled-content">
+        <span class="btn-label">Small</span>
+      </div>
+    </div>
+
+    <div class="angled-btn undo-btn right-panel" onclick="undo('right')">
+      <div class="angled-bg"></div>
+      <svg class="undo-arrow" viewBox="0 0 65 65" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M50 20 Q30 5 15 25 Q8 35 15 45" stroke="black" stroke-width="7" stroke-linecap="round" fill="none"/>
+        <path d="M10 38 L15 48 L24 42" stroke="black" stroke-width="7" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+      </svg>
+      <div class="angled-content">
+        <span class="btn-label">Undo</span>
+      </div>
+    </div>
+
+  </div>
+
+</div>
+
+<script>
+  // Canvas setup
+  const canvas = document.getElementById('drawingCanvas');
+  const ctx = canvas.getContext('2d');
+
+  function resizeCanvas() {
+    const rect = canvas.parentElement.getBoundingClientRect();
+    canvas.width = rect.width;
+    canvas.height = rect.height;
+  }
+  resizeCanvas();
+
+  // Drawing state
+  let isDrawing = false;
+  let currentStroke = 'medium';
+  let history = [];
+  let currentPath = [];
+
+  const strokeSizes = { large: 24, medium: 10, small: 4 };
+
+  function setStroke(size, side) {
+    currentStroke = size;
+    // Highlight active button visual feedback
+    document.querySelectorAll('.stroke-btn, .small-btn').forEach(b => b.style.outline = 'none');
+  }
+
+  function undo() {
+    if (history.length > 0) {
+      history.pop();
+      redraw();
+    }
+  }
+
+  function redraw() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    history.forEach(path => {
+      if (path.points.length < 2) return;
+      ctx.beginPath();
+      ctx.strokeStyle = path.color;
+      ctx.lineWidth = path.size;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.moveTo(path.points[0].x, path.points[0].y);
+      for (let i = 1; i < path.points.length; i++) {
+        ctx.lineTo(path.points[i].x, path.points[i].y);
+      }
+      ctx.stroke();
+    });
+  }
+
+  function getPos(e) {
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+    const client = e.touches ? e.touches[0] : e;
+    return {
+      x: (client.clientX - rect.left) * scaleX,
+      y: (client.clientY - rect.top) * scaleY
+    };
+  }
+
+  canvas.addEventListener('mousedown', e => {
+    isDrawing = true;
+    const pos = getPos(e);
+    currentPath = [pos];
+  });
+
+  canvas.addEventListener('mousemove', e => {
+    if (!isDrawing) return;
+    const pos = getPos(e);
+    currentPath.push(pos);
+
+    // Live draw
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    redraw();
+    if (currentPath.length >= 2) {
+      ctx.beginPath();
+      ctx.strokeStyle = '#000';
+      ctx.lineWidth = strokeSizes[currentStroke];
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.moveTo(currentPath[0].x, currentPath[0].y);
+      for (let i = 1; i < currentPath.length; i++) {
+        ctx.lineTo(currentPath[i].x, currentPath[i].y);
+      }
+      ctx.stroke();
+    }
+  });
+
+  canvas.addEventListener('mouseup', () => {
+    if (!isDrawing) return;
+    isDrawing = false;
+    history.push({ points: [...currentPath], size: strokeSizes[currentStroke], color: '#000' });
+    currentPath = [];
+  });
+
+  canvas.addEventListener('mouseleave', () => {
+    if (isDrawing) {
+      isDrawing = false;
+      history.push({ points: [...currentPath], size: strokeSizes[currentStroke], color: '#000' });
+      currentPath = [];
+    }
+  });
+
+  // Timer countdown
+  let seconds = 60;
+  const timerEl = document.querySelector('.timer-text');
+
+  const timerInterval = setInterval(() => {
+    seconds--;
+    if (seconds <= 0) {
+      seconds = 0;
+      clearInterval(timerInterval);
+    }
+    const m = Math.floor(seconds / 60);
+    const s = seconds % 60;
+    timerEl.textContent = `${m}:${s.toString().padStart(2, '0')}`;
+  }, 1000);
+</script>
+
+</body>
+</html>

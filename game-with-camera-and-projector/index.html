@@ -5,108 +5,93 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Comically Large Paintbrush</title>
   <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="https://use.typekit.net/gau8gla.css">
 </head>
 <body>
-  <header class="top-bar">
-    <svg class="wave" viewBox="0 0 1200 40" preserveAspectRatio="none">
-      <path d="M0 20 Q50 0 100 20 T200 20 T300 20 T400 20 T500 20 T600 20 T700 20 T800 20 T900 20 T1000 20 T1100 20 T1200 20" fill="none" stroke-width="3"/>
-    </svg>
-  </header>
+  <!-- Background image -->
+  <img src="images/ComicallyLargeBackground.png" alt="blue and red halftone dot design" width="500" height="600">
+  <div class="timer-display">1:30</div>
 
   <main class="game-layout">
+    <!-- Left Sidebar -->
     <aside class="sidebar sidebar-left">
-      <div class="player-panel">
-        <h2>Player 1</h2>
-        <div class="color-indicator" style="background: #e74c3c;"></div>
-      </div>
+      <div class="brush-size-group">
+        <button class="brush-btn" data-player="1" data-size="28" aria-label="Large brush">
+          <svg class="stroke-icon" viewBox="0 0 124 52" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M-2.86102e-05 21.8714C3.04133 25.4109 6.08269 28.9504 9.12405 32.4899C11.2168 31.794 13.0417 31.3758 14.96 30.95C33.2823 27.746 32.999 35.7054 54.6174 45.6792C64.2138 50.4606 81.085 54.1536 94.7309 48.156C108.258 42.4467 115.452 32.4472 120.228 22.7344C121.209 20.6136 122.139 18.3886 123.026 16.0546C120.05 13.3815 117.074 10.7084 114.099 8.03527C112.01 9.01309 110.021 9.86589 108.136 10.6017C99.4195 14.2375 91.1886 16.406 86.0946 15.7547C81.1722 15.0621 78.3763 13.5946 70.9366 10.2577C63.7957 7.13631 53.9819 1.5551 39.9296 0.227067C25.5432 -1.44552 10.8219 6.39695 4.24449 15.5636C2.57344 17.647 1.34097 19.6259 -2.86102e-05 21.8714Z" fill="black"/>
+          </svg>
+          <span class="btn-label">LARGE</span>
+        </button>
 
-      <div class="brush-options">
-        <h3>Brush Size</h3>
-        <div class="size-buttons">
-          <button class="size-btn" data-player="1" data-size="4">
-            <span class="size-dot" style="width:6px;height:6px;"></span>
-          </button>
-          <button class="size-btn active" data-player="1" data-size="8">
-            <span class="size-dot" style="width:10px;height:10px;"></span>
-          </button>
-          <button class="size-btn" data-player="1" data-size="16">
-            <span class="size-dot" style="width:16px;height:16px;"></span>
-          </button>
-          <button class="size-btn" data-player="1" data-size="28">
-            <span class="size-dot" style="width:22px;height:22px;"></span>
+        <button class="brush-btn" data-player="1" data-size="16" aria-label="Medium brush">
+          <svg class="stroke-icon" viewBox="0 0 123 38" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M7.98702e-05 16.4209C2.60696 19.4548 5.21384 22.4886 7.82072 25.5224C9.63371 24.4519 11.2231 23.6522 12.9768 22.829C29.1242 14.9559 37.9789 22.6498 57.3133 32.2043C66.4733 36.6793 80.346 40.1117 92.4361 35.7823C104.459 31.6658 112.322 23.5751 118.504 15.4488C119.802 13.6891 121.09 11.8232 122.374 9.84559C119.398 7.17249 116.423 4.49939 113.447 1.82629C111.755 3.16051 110.125 4.37241 108.557 5.46927C101.246 10.6915 93.6837 14.7689 87.0862 15.7105C80.6079 16.686 74.8136 14.9579 66.9375 11.3147C59.1731 7.84799 50.135 2.32046 37.9657 0.46846C25.6134 -1.6809 12.4568 3.83711 4.92445 11.2666C3.08883 12.9526 1.62082 14.55 7.98702e-05 16.4209Z" fill="black"/>
+          </svg>
+          <span class="btn-label">MEDIUM</span>
+        </button>
+
+        <div class="cut-corner cut-top-left">
+          <button class="brush-btn" data-player="1" data-size="8" aria-label="Small brush">
+            <svg class="stroke-icon" viewBox="0 0 112 29" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M-4.17233e-05 15.5719C1.11848 16.8075 2.23699 18.0431 3.35551 19.2787C5.04998 18.0618 6.58896 17.0616 8.23756 16.0625C23.7381 5.46108 37.0896 11.4479 53.1169 21.4394C61.1347 25.9261 71.7177 29.9568 82.2693 28.121C92.7549 26.4042 101.002 20.526 107.719 14.022C109.132 12.6255 110.557 11.1231 111.995 9.50919C111.117 8.506 110.239 7.5028 109.36 6.49961C107.628 7.66224 105.955 8.71153 104.342 9.65514C88.7966 19.5269 73.6364 20.316 58.853 10.8991C51.2684 6.86534 42.8813 1.24425 32.0492 0.153116C21.0336 -1.00282 11.1723 4.56701 4.39163 11.0348C2.83919 12.4894 1.47568 13.9239 -4.17233e-05 15.5719Z" fill="black"/>
+            </svg>
+            <span class="btn-label">SMALL</span>
           </button>
         </div>
       </div>
 
-      <div class="brush-options">
-        <h3>Halftone</h3>
-        <div class="halftone-buttons">
-          <button class="halftone-btn active" data-player="1" data-halftone="none">
-            <span class="ht-preview ht-solid"></span>
-          </button>
-          <button class="halftone-btn" data-player="1" data-halftone="dots">
-            <span class="ht-preview ht-dots"></span>
-          </button>
-          <button class="halftone-btn" data-player="1" data-halftone="lines">
-            <span class="ht-preview ht-lines"></span>
-          </button>
-          <button class="halftone-btn" data-player="1" data-halftone="cross">
-            <span class="ht-preview ht-cross"></span>
-          </button>
-        </div>
+      <div class="cut-corner cut-top-left">
+        <button class="undo-btn" data-player="1">
+          <svg class="arrow-icon" viewBox="0 0 85 87" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path fill-rule="evenodd" clip-rule="evenodd" d="M25.6782 10.3901L37.7029 15.181C44.1161 18.2298 52.9342 24.7629 58.1449 29.9894L66.5622 38.7001C74.1778 47.4109 80.5909 62.6548 83.7975 75.2854C84.1984 77.4631 85 80.9474 85 83.1251C85 85.7384 82.9959 87.9161 80.591 86.6094C78.186 85.7384 78.186 83.1251 77.7852 80.5119C77.3844 77.0276 75.3803 70.059 73.777 66.5747C70.9712 58.2994 66.963 49.5886 61.3515 43.4911C55.7399 37.3935 54.5375 35.6514 48.1243 30.4249C44.5169 27.8117 41.3103 25.634 37.7029 23.0207C32.8931 20.4075 17.6618 14.7455 11.6495 14.7455L18.8643 23.0207C21.67 26.0695 23.2733 28.2472 26.0791 31.7315C30.0873 36.958 32.8931 40.0068 36.5005 45.2332C39.707 50.0242 34.0955 54.3796 30.8889 50.0242C24.4758 40.8778 13.6536 26.9406 6.03794 19.1009C4.03383 17.3587 -0.375223 13.0033 0.0255994 9.51903C0.426422 6.9058 1.62889 6.03472 4.03383 5.59918C6.03794 5.59918 8.04205 4.29257 10.0462 3.85703L36.9013 0.372715C42.112 -0.498363 46.521 0.372715 51.3309 0.808254C54.1367 0.808254 56.1408 0.808254 56.9424 2.98595C60.149 10.3901 46.9218 8.64796 40.5087 9.0835C35.6988 9.51903 30.4881 9.51903 25.6782 10.3901Z" fill="black"/>
+          </svg>
+          <span class="btn-label">UNDO</span>
+        </button>
       </div>
-
-      <button class="undo-btn" data-player="1">Undo Last Stroke</button>
     </aside>
 
+    <!-- Canvas -->
     <section class="canvas-container">
       <canvas id="gameCanvas"></canvas>
     </section>
 
+    <!-- Right Sidebar -->
     <aside class="sidebar sidebar-right">
-      <div class="player-panel">
-        <h2>Player 2</h2>
-        <div class="color-indicator" style="background: #3498db;"></div>
-      </div>
+      <div class="brush-size-group">
+        <button class="brush-btn" data-player="2" data-size="28" aria-label="Large brush">
+          <svg class="stroke-icon" viewBox="0 0 124 52" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M-2.86102e-05 21.8714C3.04133 25.4109 6.08269 28.9504 9.12405 32.4899C11.2168 31.794 13.0417 31.3758 14.96 30.95C33.2823 27.746 32.999 35.7054 54.6174 45.6792C64.2138 50.4606 81.085 54.1536 94.7309 48.156C108.258 42.4467 115.452 32.4472 120.228 22.7344C121.209 20.6136 122.139 18.3886 123.026 16.0546C120.05 13.3815 117.074 10.7084 114.099 8.03527C112.01 9.01309 110.021 9.86589 108.136 10.6017C99.4195 14.2375 91.1886 16.406 86.0946 15.7547C81.1722 15.0621 78.3763 13.5946 70.9366 10.2577C63.7957 7.13631 53.9819 1.5551 39.9296 0.227067C25.5432 -1.44552 10.8219 6.39695 4.24449 15.5636C2.57344 17.647 1.34097 19.6259 -2.86102e-05 21.8714Z" fill="black"/>
+          </svg>
+          <span class="btn-label">LARGE</span>
+        </button>
 
-      <div class="brush-options">
-        <h3>Brush Size</h3>
-        <div class="size-buttons">
-          <button class="size-btn" data-player="2" data-size="4">
-            <span class="size-dot" style="width:6px;height:6px;"></span>
-          </button>
-          <button class="size-btn active" data-player="2" data-size="8">
-            <span class="size-dot" style="width:10px;height:10px;"></span>
-          </button>
-          <button class="size-btn" data-player="2" data-size="16">
-            <span class="size-dot" style="width:16px;height:16px;"></span>
-          </button>
-          <button class="size-btn" data-player="2" data-size="28">
-            <span class="size-dot" style="width:22px;height:22px;"></span>
+        <button class="brush-btn" data-player="2" data-size="16" aria-label="Medium brush">
+          <svg class="stroke-icon" viewBox="0 0 123 38" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M7.98702e-05 16.4209C2.60696 19.4548 5.21384 22.4886 7.82072 25.5224C9.63371 24.4519 11.2231 23.6522 12.9768 22.829C29.1242 14.9559 37.9789 22.6498 57.3133 32.2043C66.4733 36.6793 80.346 40.1117 92.4361 35.7823C104.459 31.6658 112.322 23.5751 118.504 15.4488C119.802 13.6891 121.09 11.8232 122.374 9.84559C119.398 7.17249 116.423 4.49939 113.447 1.82629C111.755 3.16051 110.125 4.37241 108.557 5.46927C101.246 10.6915 93.6837 14.7689 87.0862 15.7105C80.6079 16.686 74.8136 14.9579 66.9375 11.3147C59.1731 7.84799 50.135 2.32046 37.9657 0.46846C25.6134 -1.6809 12.4568 3.83711 4.92445 11.2666C3.08883 12.9526 1.62082 14.55 7.98702e-05 16.4209Z" fill="black"/>
+          </svg>
+          <span class="btn-label">MEDIUM</span>
+        </button>
+
+        <div class="cut-corner cut-top-right">
+          <button class="brush-btn" data-player="2" data-size="8" aria-label="Small brush">
+            <svg class="stroke-icon" viewBox="0 0 112 29" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M-4.17233e-05 15.5719C1.11848 16.8075 2.23699 18.0431 3.35551 19.2787C5.04998 18.0618 6.58896 17.0616 8.23756 16.0625C23.7381 5.46108 37.0896 11.4479 53.1169 21.4394C61.1347 25.9261 71.7177 29.9568 82.2693 28.121C92.7549 26.4042 101.002 20.526 107.719 14.022C109.132 12.6255 110.557 11.1231 111.995 9.50919C111.117 8.506 110.239 7.5028 109.36 6.49961C107.628 7.66224 105.955 8.71153 104.342 9.65514C88.7966 19.5269 73.6364 20.316 58.853 10.8991C51.2684 6.86534 42.8813 1.24425 32.0492 0.153116C21.0336 -1.00282 11.1723 4.56701 4.39163 11.0348C2.83919 12.4894 1.47568 13.9239 -4.17233e-05 15.5719Z" fill="black"/>
+            </svg>
+            <span class="btn-label">SMALL</span>
           </button>
         </div>
       </div>
 
-      <div class="brush-options">
-        <h3>Halftone</h3>
-        <div class="halftone-buttons">
-          <button class="halftone-btn active" data-player="2" data-halftone="none">
-            <span class="ht-preview ht-solid"></span>
-          </button>
-          <button class="halftone-btn" data-player="2" data-halftone="dots">
-            <span class="ht-preview ht-dots"></span>
-          </button>
-          <button class="halftone-btn" data-player="2" data-halftone="lines">
-            <span class="ht-preview ht-lines"></span>
-          </button>
-          <button class="halftone-btn" data-player="2" data-halftone="cross">
-            <span class="ht-preview ht-cross"></span>
-          </button>
-        </div>
+      <div class="cut-corner cut-top-right">
+        <button class="undo-btn" data-player="2">
+          <svg class="arrow-icon" viewBox="0 0 85 87" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path fill-rule="evenodd" clip-rule="evenodd" d="M25.6782 10.3901L37.7029 15.181C44.1161 18.2298 52.9342 24.7629 58.1449 29.9894L66.5622 38.7001C74.1778 47.4109 80.5909 62.6548 83.7975 75.2854C84.1984 77.4631 85 80.9474 85 83.1251C85 85.7384 82.9959 87.9161 80.591 86.6094C78.186 85.7384 78.186 83.1251 77.7852 80.5119C77.3844 77.0276 75.3803 70.059 73.777 66.5747C70.9712 58.2994 66.963 49.5886 61.3515 43.4911C55.7399 37.3935 54.5375 35.6514 48.1243 30.4249C44.5169 27.8117 41.3103 25.634 37.7029 23.0207C32.8931 20.4075 17.6618 14.7455 11.6495 14.7455L18.8643 23.0207C21.67 26.0695 23.2733 28.2472 26.0791 31.7315C30.0873 36.958 32.8931 40.0068 36.5005 45.2332C39.707 50.0242 34.0955 54.3796 30.8889 50.0242C24.4758 40.8778 13.6536 26.9406 6.03794 19.1009C4.03383 17.3587 -0.375223 13.0033 0.0255994 9.51903C0.426422 6.9058 1.62889 6.03472 4.03383 5.59918C6.03794 5.59918 8.04205 4.29257 10.0462 3.85703L36.9013 0.372715C42.112 -0.498363 46.521 0.372715 51.3309 0.808254C54.1367 0.808254 56.1408 0.808254 56.9424 2.98595C60.149 10.3901 46.9218 8.64796 40.5087 9.0835C35.6988 9.51903 30.4881 9.51903 25.6782 10.3901Z" fill="black"/>
+          </svg>
+          <span class="btn-label">UNDO</span>
+        </button>
       </div>
-
-      <button class="undo-btn" data-player="2">Undo Last Stroke</button>
     </aside>
+
   </main>
 
   <script src="https://unpkg.com/kaplay@3001/dist/kaplay.js"></script>
