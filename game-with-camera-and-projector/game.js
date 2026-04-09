@@ -1,3 +1,149 @@
+// ─── Prompt & Caption data ───────────────────────────────────────────────────
+const PROMPTS = [
+  { text: "A pig on the moon",                 caption: "1936: Pigs did it first." },
+  { text: "Wizards ordering coffee",           caption: "Double-shot, extra enchantment." },
+  { text: "Fish out of water",                 caption: "Gills optional, panic mandatory." },
+  { text: "The biggest fish to fry",           caption: "Bigger boat. Bigger pan." },
+  { text: "A bug in a rug",                    caption: "Cozy. Suspiciously cozy." },
+  { text: "Hit the nail on the head",          caption: "Ouch. But accurate." },
+  { text: "Salt and pepper dancing together",  caption: "A seasoned romance." },
+  { text: "Dog Fight",                         caption: "Winner takes the bone." },
+  { text: "Walter gets ice cream",             caption: "Walter earned this." },
+  { text: "Under the weather",                 caption: "Forecast: 100% blanket." },
+  { text: "As easy as big juicy pie",          caption: "A slice above the rest." },
+  { text: "Spilt milk",                        caption: "No crying. House rules." },
+  { text: "Wild goose on the loose",           caption: "Honk if you've seen him." },
+  { text: "The elephant in the room",          caption: "We are NOT going to talk about it." },
+  { text: "A giant destroying a village",      caption: "Rent was too high anyway." },
+];
+
+const FRAME_IMAGES = [
+  "../assets/pictureframesAsset 1 1.png",
+  "../assets/pictureframesAsset 3 1.png",
+  "../assets/pictureframesAsset 4 1.png",
+];
+
+let chosenPrompt = null;
+let gameStarted  = false;
+let gameEnded    = false;
+
+// ─── Prompt select animation (scrolling list) ────────────────────────────────
+const OPTION_HEIGHT = 96; // must match .prompt-option height in CSS (px)
+
+function runPromptSelect() {
+  chosenPrompt = PROMPTS[Math.floor(Math.random() * PROMPTS.length)];
+
+  const scroller = document.getElementById("promptScroller");
+  const track    = document.getElementById("promptScrollerTrack");
+  track.innerHTML = "";
+  track.style.transform = "translateY(0px)";
+
+  const LOOPS = 3;
+  const items = [];
+  for (let i = 0; i < LOOPS; i++) {
+    const shuffled = PROMPTS.slice().sort(() => Math.random() - 0.5);
+    for (const p of shuffled) items.push(p.text);
+  }
+  items.push(chosenPrompt.text);
+
+  for (const t of items) {
+    const div = document.createElement("div");
+    div.className = "prompt-option";
+    div.style.height = OPTION_HEIGHT + "px";
+    div.style.lineHeight = OPTION_HEIGHT + "px";
+    div.textContent = t;
+    track.appendChild(div);
+  }
+
+  const go = () => {
+    const scrollerHeight = scroller.clientHeight;
+    const centerOffset = (scrollerHeight - OPTION_HEIGHT) / 2;
+
+    const finalIndex = items.length - 1;
+    const finalY = -(finalIndex * OPTION_HEIGHT) + centerOffset;
+    const startY = centerOffset;
+
+    const duration = 3200;
+    const startTime = performance.now();
+    const ease = t => 1 - Math.pow(1 - t, 3);
+
+    function step(now) {
+      const elapsed = now - startTime;
+      const t = Math.min(elapsed / duration, 1);
+      const y = startY + (finalY - startY) * ease(t);
+      track.style.transform = `translateY(${y}px)`;
+      if (t < 1) {
+        requestAnimationFrame(step);
+      } else {
+        track.style.transform = `translateY(${finalY}px)`;
+        const landed = track.children[finalIndex];
+        if (landed) landed.classList.add("landed");
+
+        setTimeout(() => {
+          startCountdownAfterPrompt();
+        }, 900);
+      }
+    }
+    requestAnimationFrame(step);
+  };
+
+  if (document.fonts && document.fonts.ready) {
+    document.fonts.ready.then(go);
+  } else {
+    go();
+  }
+}
+
+// ─── Countdown video ─────────────────────────────────────────────────────────
+function startCountdownAfterPrompt() {
+  const promptOverlay    = document.getElementById("promptOverlay");
+  const countdownOverlay = document.getElementById("countdownOverlay");
+  const video            = document.getElementById("countdownVideo");
+
+  let finished = false;
+  const finish = () => {
+    if (finished) return;
+    finished = true;
+    countdownOverlay.classList.add("hidden");
+    startGame();
+  };
+  video.addEventListener("ended", finish, { once: true });
+  video.addEventListener("error", finish, { once: true });
+  setTimeout(finish, 30000); // hard fallback
+
+  const beginPlayback = () => {
+    countdownOverlay.classList.remove("hidden");
+    try { video.currentTime = 0; } catch (_) {}
+    const p = video.play();
+    const afterStart = () => {
+      promptOverlay.classList.add("fade-out");
+      setTimeout(() => { promptOverlay.style.display = "none"; }, 600);
+    };
+    if (p && typeof p.then === "function") {
+      p.then(afterStart).catch(() => { afterStart(); finish(); });
+    } else {
+      afterStart();
+    }
+  };
+
+  if (video.readyState >= 3) {
+    beginPlayback();
+  } else {
+    let readyFired = false;
+    const onReady = () => {
+      if (readyFired) return;
+      readyFired = true;
+      video.removeEventListener("canplaythrough", onReady);
+      video.removeEventListener("canplay", onReady);
+      beginPlayback();
+    };
+    video.addEventListener("canplaythrough", onReady);
+    video.addEventListener("canplay", onReady);
+    setTimeout(onReady, 5000);
+    try { video.load(); } catch (_) {}
+  }
+}
+
 // ─── Tracker config ──────────────────────────────────────────────────────────
 const TRACKER_URL    = "http://localhost:5050/state";
 const POLL_INTERVAL  = 16;   // ms (~60 fps)
@@ -42,17 +188,59 @@ const TOTAL_TIME = 90;
 let timeLeft     = TOTAL_TIME;
 
 const timerDisplay = document.querySelector(".timer-display");
+let timerInterval = null;
 
-
-const timerInterval = setInterval(() => {
-  timeLeft--;
-  if (timeLeft <= 0) { timeLeft = 0; clearInterval(timerInterval); }
+function renderTimer() {
   const mins = Math.floor(timeLeft/60);
   const secs = timeLeft % 60;
-  const timeStr = `${mins}:${secs.toString().padStart(2,"0")}`;
-  timerDisplay.textContent = timeStr;
-  const elapsed = (TOTAL_TIME-timeLeft)/TOTAL_TIME;
-}, 1000);
+  timerDisplay.textContent = `${mins}:${secs.toString().padStart(2,"0")}`;
+}
+renderTimer();
+
+function startTimer() {
+  timerInterval = setInterval(() => {
+    timeLeft--;
+    if (timeLeft <= 0) {
+      timeLeft = 0;
+      clearInterval(timerInterval);
+      endGame();
+    }
+    renderTimer();
+  }, 1000);
+}
+
+function startGame() {
+  gameStarted = true;
+  startTimer();
+}
+
+function endGame() {
+  if (gameEnded) return;
+  gameEnded = true;
+  setTimeout(showFramedResult, 400);
+}
+
+function showFramedResult() {
+  const captionOverlay = document.getElementById("captionOverlay");
+  const captionText    = document.getElementById("captionText");
+  const frameImg       = document.getElementById("frameImg");
+  const finalCanvas    = document.getElementById("finalDrawingCanvas");
+
+  frameImg.src = FRAME_IMAGES[Math.floor(Math.random() * FRAME_IMAGES.length)];
+
+  const srcCanvas = document.getElementById("gameCanvas");
+  finalCanvas.width  = srcCanvas.width;
+  finalCanvas.height = srcCanvas.height;
+  const ctx = finalCanvas.getContext("2d");
+  ctx.fillStyle = "#fff";
+  ctx.fillRect(0, 0, finalCanvas.width, finalCanvas.height);
+  try {
+    ctx.drawImage(srcCanvas, 0, 0, finalCanvas.width, finalCanvas.height);
+  } catch (_) {}
+
+  captionText.textContent = chosenPrompt?.caption || "";
+  captionOverlay.classList.remove("hidden");
+}
 
 // ─── Canvas side helpers ──────────────────────────────────────────────────────
 function clampToSide(point, side) {
@@ -64,6 +252,7 @@ function clampToSide(point, side) {
 
 // ─── Mouse drawing ────────────────────────────────────────────────────────────
 onMousePress(() => {
+  if (!gameStarted || gameEnded) return;
   const mp   = mousePos();
   const side = mp.x < DIVIDER_X ? "left" : "right";
   const player = side==="left" ? 1 : 2;
@@ -79,7 +268,7 @@ onMousePress(() => {
 });
 
 onMouseMove(() => {
-  if (!isMouseDown() || !currentStroke) return;
+  if (!isMouseDown() || !currentStroke || !gameStarted || gameEnded) return;
   const mp = mousePos();
   const onCorrectSide = currentStroke.side==="left" ? mp.x<DIVIDER_X : mp.x>=DIVIDER_X;
   if (onCorrectSide) currentStroke.points.push(mp);
@@ -107,6 +296,10 @@ let trackerP2         = { x:0.5, y:0.5, active:false };
 const trackerStroke = { 1: null, 2: null };
 
 function handleTrackerPoint(point, playerOverride) {
+  if (!gameStarted || gameEnded) {
+    trackerStroke[playerOverride] = null;
+    return;
+  }
   if (!point.active) {
     trackerStroke[playerOverride] = null;
     return;
@@ -261,3 +454,6 @@ document.querySelectorAll(".undo-btn").forEach(btn => {
     playerState[player].strokes.pop();
   });
 });
+
+// ─── Kick off ────────────────────────────────────────────────────────────────
+runPromptSelect();

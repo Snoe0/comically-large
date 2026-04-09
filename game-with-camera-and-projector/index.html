@@ -6,10 +6,41 @@
   <title>Comically Large Paintbrush</title>
   <link rel="stylesheet" href="style.css">
   <link rel="stylesheet" href="https://use.typekit.net/gau8gla.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bangers&family=Special+Elite&display=swap" rel="stylesheet">
 </head>
 <body>
   <!-- Background image -->
   <img src="images/ComicallyLargeBackground.png" alt="blue and red halftone dot design" width="500" height="600">
+
+  <!-- Prompt select overlay -->
+  <div id="promptOverlay" class="prompt-overlay">
+    <div class="comic-panel">
+      <h1 class="prompt-title">YOUR PROMPT IS...</h1>
+      <div id="promptScroller" class="prompt-scroller">
+        <div id="promptScrollerTrack" class="prompt-scroller-track"></div>
+        <div class="scroller-highlight"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Countdown video overlay -->
+  <div id="countdownOverlay" class="countdown-overlay hidden">
+    <video id="countdownVideo" src="../assets/comic-countdown.mp4" playsinline preload="auto" muted></video>
+  </div>
+
+  <!-- Final framed caption overlay (shown at end) -->
+  <div id="captionOverlay" class="caption-overlay hidden">
+    <div class="frame-wrap">
+      <img class="frame-img" id="frameImg" src="../assets/pictureframesAsset 1 1.png" alt="frame" />
+      <canvas id="finalDrawingCanvas" class="frame-drawing"></canvas>
+    </div>
+    <div class="plaque">
+      <div id="captionText" class="caption-text"></div>
+    </div>
+  </div>
+
   <div class="timer-display">1:30</div>
 
   <main class="game-layout">
