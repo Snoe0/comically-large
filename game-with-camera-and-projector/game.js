@@ -228,6 +228,11 @@ function showFramedResult() {
 
   frameImg.src = FRAME_IMAGES[Math.floor(Math.random() * FRAME_IMAGES.length)];
 
+  // Recolor every existing stroke to black; the render loop will redraw them.
+  for (const p of [1, 2]) {
+    for (const stroke of playerState[p].strokes) stroke.color = [0, 0, 0];
+  }
+
   const srcCanvas = document.getElementById("gameCanvas");
   finalCanvas.width  = srcCanvas.width;
   finalCanvas.height = srcCanvas.height;
@@ -406,7 +411,7 @@ setInterval(() => {
 
 // ─── Render ───────────────────────────────────────────────────────────────────
 onDraw(() => {
-  drawDivider();
+  if (!gameEnded) drawDivider();
 
   const allStrokes = [...playerState[1].strokes, ...playerState[2].strokes];
   for (const stroke of allStrokes) {
