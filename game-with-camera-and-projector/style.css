@@ -95,108 +95,28 @@ body {
   margin-bottom: clamp(8px, 1.2vh, 18px);
 }
 
-/* ---- Standard brush buttons (Large, Medium) ---- */
-.brush-btn {
-  width: 100%;
-  border: clamp(3px, 0.4vw, 7px) solid #000;
-  border-radius: 4px;
-  background: #fff;
-  cursor: pointer;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  padding: clamp(14px, 2.5vh, 36px) clamp(12px, 2vw, 40px);
-  gap: clamp(6px, 1vh, 14px);
-  transition: background 0.12s;
-}
-
-.brush-btn:hover {
-  background: #f5f5f5;
-}
-
-.brush-btn.active {
-  background: #ffe8ef;
-}
-
-/* ---- Cut-corner wrapper (for Small & Undo buttons) ---- */
-.cut-corner {
-  width: 100%;
-  background: #000;
-  padding: clamp(3px, 0.4vw, 7px);
-  display: flex;
-}
-
-/* Left sidebar: cut top-left corner */
-.cut-top-left {
-  clip-path: polygon(
-    clamp(20px, 3vw, 36px) 0%,
-    100% 0%,
-    100% 100%,
-    0% 100%,
-    0% clamp(20px, 3vw, 36px)
-  );
-}
-
-/* Right sidebar: cut top-right corner */
-.cut-top-right {
-  clip-path: polygon(
-    0% 0%,
-    calc(100% - clamp(20px, 3vw, 36px)) 0%,
-    100% clamp(20px, 3vw, 36px),
-    100% 100%,
-    0% 100%
-  );
-}
-
-/* Inner buttons inside cut-corner wrappers */
-.cut-corner > .brush-btn {
+/* ---- SVG Buttons ---- */
+.svg-btn {
+  background: none;
   border: none;
-  border-radius: 0;
-  padding: clamp(12px, 2vh, 28px) clamp(12px, 2vw, 40px);
-}
-
-.cut-corner > .undo-btn {
-  flex: 1;
-  background: #fff;
-  border: none;
+  padding: 0;
   cursor: pointer;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  padding: clamp(14px, 2.5vh, 36px) clamp(12px, 2vw, 40px);
-  gap: clamp(8px, 1.5vh, 18px);
-  transition: background 0.12s;
+  width: 100%;
+  display: block;
 }
 
-.cut-corner > .undo-btn:hover {
-  background: #f5f5f5;
-}
-
-/* ---- Icons ---- */
-.stroke-icon {
-  width: clamp(50px, 7vw, 100px);
+.svg-btn svg {
+  width: 100%;
   height: auto;
   display: block;
-  flex-shrink: 0;
+  fill: #fff;
 }
 
-.arrow-icon {
-  width: clamp(32px, 4.5vw, 60px);
-  height: auto;
-  display: block;
-  flex-shrink: 0;
+.brush-btn:hover .btn-bg,
+.undo-btn:hover .btn-bg {
+  fill: #f5f5f5;
 }
 
-/* ---- Button labels ---- */
-.btn-label {
-  font-family: 'imaginaryfriend-bb', sans-serif;
-  font-size: clamp(14px, 2vw, 26px);
-  font-weight: 900;
-  color: #000;
-  line-height: 1;
-  text-transform: uppercase;
-  letter-spacing: 0.02em;
-  white-space: nowrap;
+.brush-btn.active .btn-bg {
+  fill: #ffe8ef;
 }
