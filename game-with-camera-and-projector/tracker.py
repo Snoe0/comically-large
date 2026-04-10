@@ -44,11 +44,33 @@ import threading
 import time
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
+try:
+    import pyrealsense2 as rs
+    _HAS_REALSENSE = True
+except ImportError:
+    _HAS_REALSENSE = False
+
 # ── Config ────────────────────────────────────────────────────────────────────
 PORT        = 5050
-CAMERA_IDX  = 0
+CAMERA_IDX  = 2                    # Only used when USE_REALSENSE is False
 FLIP_H      = False
 WINDOW_NAME = "CLPbrush Tracker  |  C=corners  M=mode  [/]=threshold  R=reset  Q=quit"
+
+# ── RealSense config ──────────────────────────────────────────────────────────
+# The D455 exposes its IR imagers only through the librealsense SDK, NOT through
+# OpenCV's VideoCapture. Use pyrealsense2 to pull the left-IR stream directly.
+USE_REALSENSE       = True
+RS_IR_INDEX         = 1            # 1 = left IR imager, 2 = right IR imager
+RS_WIDTH            = 1280
+RS_HEIGHT           = 720
+RS_FPS              = 30
+RS_EMITTER_ENABLED  = False        # D455's dot projector — off = clean passive IR
+# Manual exposure forces the scene dark so only the IR LED punches through.
+# Auto-exposure fights you here — it brightens the whole frame and lights up
+# every reflection. Start low (~500 µs) and raise if the LED itself is too dim.
+RS_AUTO_EXPOSURE    = False
+RS_EXPOSURE_US      = 1500         # microseconds; typical useful range ~100–8000
+RS_GAIN             = 16           # 16 = minimum on D455 IR
 
 MODES = ["BRIGHT", "RED", "GREEN", "BLUE", "CUSTOM"]
 
@@ -62,7 +84,7 @@ _state = {
 }
 _corners     = []
 _mode        = "BRIGHT"
-_thresh      = 200
+_thresh      = 150
 _hue_tol     = 15
 
 # Custom mode: two independent HSV color ranges
@@ -188,15 +210,20 @@ def run_server():
 
 # ── Perspective warp helpers ───────────────────────────────────────────────────
 def order_corners(pts):
-    pts  = np.array(pts, dtype="float32")
-    s    = pts.sum(axis=1)
-    diff = np.diff(pts, axis=1)
-    return np.array([
-        pts[np.argmin(s)],
-        pts[np.argmin(diff)],
-        pts[np.argmax(s)],
-        pts[np.argmax(diff)],
-    ], dtype="float32")
+    # Sort the 4 points clockwise by angle from their centroid, then rotate so
+    # the point closest to the top-left of the bounding box is first. This is
+    # robust for any convex quadrilateral; the simpler sum/diff heuristic
+    # collapses to 3 unique points when the quad is rotated enough that one
+    # corner minimizes both (x+y) and (y-x) — producing a triangle instead of
+    # a quad after polylines draws it.
+    pts    = np.array(pts, dtype="float32")
+    center = pts.mean(axis=0)
+    # In image coordinates (y-axis points down), ascending atan2 sorts
+    # clockwise: TL ~ -3pi/4, TR ~ -pi/4, BR ~ pi/4, BL ~ 3pi/4.
+    angles = np.arctan2(pts[:, 1] - center[1], pts[:, 0] - center[0])
+    ordered = pts[np.argsort(angles)]
+    tl_idx  = int(np.argmin(ordered.sum(axis=1)))
+    return np.roll(ordered, -tl_idx, axis=0)
 
 def build_transform(corners_px, out_w=800, out_h=600):
     src = order_corners(corners_px)
@@ -205,7 +232,9 @@ def build_transform(corners_px, out_w=800, out_h=600):
 
 # ── Masking ───────────────────────────────────────────────────────────────────
 def _clean(mask):
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+    # 3x3 kernel (was 5x5) so a small, round IR point isn't eroded away by the
+    # opening step on frames where it's only a handful of pixels wide.
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
     mask   = cv2.morphologyEx(mask, cv2.MORPH_OPEN,   kernel)
     mask   = cv2.morphologyEx(mask, cv2.MORPH_DILATE, kernel)
     return mask
@@ -235,13 +264,15 @@ def make_hsv_mask(frame, low, high):
     return _clean(mask)
 
 # ── Centroid detection ────────────────────────────────────────────────────────
+MIN_CONTOUR_AREA = 5   # was 30; small IR points flicker out above that
+
 def find_centroid(mask):
     """Return (cx, cy) of largest contour, or None."""
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     if not contours:
         return None
     c = max(contours, key=cv2.contourArea)
-    if cv2.contourArea(c) < 30:
+    if cv2.contourArea(c) < MIN_CONTOUR_AREA:
         return None
     M = cv2.moments(c)
     if M["m00"] == 0:
@@ -256,7 +287,7 @@ def find_two_centroids(mask):
     contours = sorted(contours, key=cv2.contourArea, reverse=True)
     results  = []
     for c in contours[:2]:
-        if cv2.contourArea(c) < 30:
+        if cv2.contourArea(c) < MIN_CONTOUR_AREA:
             break
         M = cv2.moments(c)
         if M["m00"] == 0:
@@ -313,14 +344,14 @@ def on_mouse(event, x, y, flags, param):
             _c1_low  = np.array([max(0,   int(h) - 15), max(0,   int(s) - 60), max(0,   int(v) - 60)])
             _c1_high = np.array([min(179, int(h) + 15), 255, 255])
             _c1_set  = True
-            print(f"[CUSTOM] Pencil 1 color → H={h} S={s} V={v}")
+            print(f"[CUSTOM] Pencil 1 color -> H={h} S={s} V={v}")
         elif event == cv2.EVENT_RBUTTONDOWN:
             hsv = cv2.cvtColor(_last_frame, cv2.COLOR_BGR2HSV)
             h, s, v = hsv[y, x]
             _c2_low  = np.array([max(0,   int(h) - 15), max(0,   int(s) - 60), max(0,   int(v) - 60)])
             _c2_high = np.array([min(179, int(h) + 15), 255, 255])
             _c2_set  = True
-            print(f"[CUSTOM] Pencil 2 color → H={h} S={s} V={v}")
+            print(f"[CUSTOM] Pencil 2 color -> H={h} S={s} V={v}")
 
 # ── Drawing helpers ────────────────────────────────────────────────────────────
 P1_COLOR = (0, 255, 80)    # green
@@ -350,6 +381,173 @@ def draw_color_swatch(display, low, high, label, x, y, set_flag):
     cv2.putText(display, label, (x + 33, y + 20),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.55, (30, 30, 30), 1, cv2.LINE_AA)
 
+# ── Capture layer ─────────────────────────────────────────────────────────────
+class RealsenseCapture:
+    """
+    Minimal cv2.VideoCapture-compatible wrapper around a pyrealsense2 pipeline
+    that delivers the D455's left (or right) IR stream as a 3-channel BGR frame.
+    Only the methods used by main() are implemented: isOpened, read, set, release.
+
+    Self-heals against the common "stereo module is wedged and never delivers
+    frames" state by issuing a hardware_reset() and retrying once.
+    """
+    def __init__(self, ir_index=1, width=1280, height=720, fps=30, emitter_enabled=False):
+        self._opened         = False
+        self._ir_index       = ir_index
+        self._width          = width
+        self._height         = height
+        self._fps            = fps
+        self._emitter        = emitter_enabled
+        self._pipeline       = None
+
+        if not self._start_and_probe():
+            print("[RS] First start produced no frames — resetting device and retrying.")
+            self._hardware_reset()
+            if not self._start_and_probe():
+                print("[ERROR] RealSense stereo module not delivering frames after reset.")
+                return
+
+        self._opened = True
+        print(f"[RS] Streaming IR {ir_index} @ {width}x{height} {fps}fps")
+
+    def _start_and_probe(self):
+        """Start the pipeline and verify that at least one IR frame arrives."""
+        self._pipeline = rs.pipeline()
+        cfg = rs.config()
+        cfg.enable_stream(
+            rs.stream.infrared, self._ir_index,
+            self._width, self._height, rs.format.y8, self._fps,
+        )
+        try:
+            profile = self._pipeline.start(cfg)
+        except RuntimeError as e:
+            print(f"[RS] pipeline.start failed: {e}")
+            self._pipeline = None
+            return False
+
+        # The IR dot projector lives on the depth (stereo) sensor. Toggle it
+        # even though we didn't enable the depth stream — the option still
+        # applies to the IR imagers. Exposure + gain also live on this sensor.
+        try:
+            depth_sensor = profile.get_device().first_depth_sensor()
+            if depth_sensor.supports(rs.option.emitter_enabled):
+                depth_sensor.set_option(rs.option.emitter_enabled, 1.0 if self._emitter else 0.0)
+                print(f"[RS] IR emitter: {'ON' if self._emitter else 'OFF'}")
+
+            # Auto-exposure will brighten the room and light up every reflection,
+            # which is exactly what we *don't* want when hunting a point source.
+            # Force manual exposure low so only the IR LED itself punches through.
+            if depth_sensor.supports(rs.option.enable_auto_exposure):
+                depth_sensor.set_option(
+                    rs.option.enable_auto_exposure,
+                    1.0 if RS_AUTO_EXPOSURE else 0.0,
+                )
+                print(f"[RS] IR auto-exposure: {'ON' if RS_AUTO_EXPOSURE else 'OFF'}")
+            if not RS_AUTO_EXPOSURE:
+                if depth_sensor.supports(rs.option.exposure):
+                    depth_sensor.set_option(rs.option.exposure, float(RS_EXPOSURE_US))
+                    print(f"[RS] IR exposure: {RS_EXPOSURE_US} us")
+                if depth_sensor.supports(rs.option.gain):
+                    depth_sensor.set_option(rs.option.gain, float(RS_GAIN))
+                    print(f"[RS] IR gain: {RS_GAIN}")
+        except Exception as e:
+            print(f"[RS] Could not configure IR sensor options: {e}")
+
+        # Probe: one frame must actually arrive, or we consider the start a failure.
+        try:
+            frames = self._pipeline.wait_for_frames(timeout_ms=3000)
+            if frames.get_infrared_frame(self._ir_index):
+                return True
+            print("[RS] Probe frameset contained no IR frame.")
+        except RuntimeError as e:
+            print(f"[RS] Probe wait_for_frames failed: {e}")
+
+        try:
+            self._pipeline.stop()
+        except Exception:
+            pass
+        self._pipeline = None
+        return False
+
+    def _hardware_reset(self):
+        """Reset the D455 and wait for it to re-enumerate."""
+        try:
+            ctx = rs.context()
+            devs = ctx.query_devices()
+            if len(devs) == 0:
+                return
+            devs[0].hardware_reset()
+        except Exception as e:
+            print(f"[RS] hardware_reset raised: {e}")
+            return
+
+        # Wait for re-enumeration
+        for i in range(20):
+            time.sleep(0.5)
+            if len(rs.context().query_devices()) > 0:
+                time.sleep(0.5)  # settle
+                return
+        print("[RS] Device did not re-enumerate within 10s after reset.")
+
+    def isOpened(self):
+        return self._opened
+
+    def read(self):
+        if not self._opened:
+            return False, None
+        try:
+            frames = self._pipeline.wait_for_frames(timeout_ms=2000)
+        except RuntimeError:
+            return False, None
+        ir = frames.get_infrared_frame(self._ir_index)
+        if not ir:
+            return False, None
+        y8 = np.asanyarray(ir.get_data())
+        # Convert to BGR so the existing HSV/threshold pipeline works unchanged.
+        return True, cv2.cvtColor(y8, cv2.COLOR_GRAY2BGR)
+
+    def set(self, *_args, **_kwargs):
+        # No-op: resolution/FPS are fixed at pipeline start. Kept for API parity
+        # with cv2.VideoCapture so main() doesn't need to branch.
+        return True
+
+    def release(self):
+        if self._opened:
+            try:
+                self._pipeline.stop()
+            except Exception:
+                pass
+            self._opened = False
+
+
+def open_capture():
+    """Return a capture object — RealSense if configured and available, else OpenCV."""
+    if USE_REALSENSE:
+        if not _HAS_REALSENSE:
+            print("[ERROR] USE_REALSENSE=True but pyrealsense2 is not installed.")
+            print("        Run: pip install pyrealsense2")
+            return None
+        cap = RealsenseCapture(
+            ir_index=RS_IR_INDEX,
+            width=RS_WIDTH,
+            height=RS_HEIGHT,
+            fps=RS_FPS,
+            emitter_enabled=RS_EMITTER_ENABLED,
+        )
+        if not cap.isOpened():
+            print("[ERROR] Could not start RealSense pipeline. Is the D455 plugged in?")
+            return None
+        return cap
+
+    cap = cv2.VideoCapture(CAMERA_IDX)
+    if not cap.isOpened():
+        print(f"[ERROR] Cannot open camera {CAMERA_IDX}")
+        return None
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH,  1280)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+    return cap
+
+
 # ── Main loop ──────────────────────────────────────────────────────────────────
 def main():
     global _corners, _corner_mode, _mode, _thresh, _last_frame
@@ -358,13 +556,9 @@ def main():
     t = threading.Thread(target=run_server, daemon=True)
     t.start()
 
-    cap = cv2.VideoCapture(CAMERA_IDX)
-    if not cap.isOpened():
-        print(f"[ERROR] Cannot open camera {CAMERA_IDX}")
+    cap = open_capture()
+    if cap is None:
         return
-
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH,  1280)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
 
     cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL)
     cv2.resizeWindow(WINDOW_NAME, 1280, 720)
@@ -456,7 +650,7 @@ def main():
 
         if _corner_mode:
             cv2.putText(display,
-                        f"CLICK CORNER {len(_corners)+1}/4  (TL → TR → BR → BL)",
+                        f"CLICK CORNER {len(_corners)+1}/4  (TL -> TR -> BR -> BL)",
                         (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 120, 255), 2)
 
         # ── CUSTOM mode color-swatch overlay ──────────────────────────────────
@@ -504,7 +698,7 @@ def main():
             _corners     = []
             M_warp       = None
             _corner_mode = True
-            print("[CORNERS] Click 4 corners: TL → TR → BR → BL")
+            print("[CORNERS] Click 4 corners: TL -> TR -> BR -> BL")
         elif key == ord('m'):
             _mode = MODES[(MODES.index(_mode) + 1) % len(MODES)]
             print(f"[MODE] {_mode}")
