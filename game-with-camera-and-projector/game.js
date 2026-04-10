@@ -460,5 +460,52 @@ document.querySelectorAll(".undo-btn").forEach(btn => {
   });
 });
 
+// ─── Restart on spacebar from end screen ─────────────────────────────────────
+function restartGame() {
+  // Reset state flags
+  gameStarted = false;
+  gameEnded   = false;
+
+  // Clear strokes
+  playerState[1].strokes = [];
+  playerState[2].strokes = [];
+  playerState[1].brushSize = 16;
+  playerState[2].brushSize = 16;
+  currentStroke        = null;
+  trackerCurrentStroke = null;
+  trackerStroke[1]     = null;
+  trackerStroke[2]     = null;
+
+  // Reset timer
+  clearInterval(timerInterval);
+  timeLeft = TOTAL_TIME;
+  renderTimer();
+
+  // Hide end-screen overlay
+  document.getElementById("captionOverlay").classList.add("hidden");
+
+  // Re-show prompt overlay for the next round
+  const promptOverlay = document.getElementById("promptOverlay");
+  promptOverlay.classList.remove("fade-out");
+  promptOverlay.style.display = "";
+
+  // Reset brush-size button highlights
+  document.querySelectorAll(".brush-size-group").forEach(group => {
+    group.querySelectorAll(".brush-btn").forEach(b => b.classList.remove("active"));
+    const def = group.querySelector('.brush-btn[data-size="16"]');
+    if (def) def.classList.add("active");
+  });
+
+  // Restart the game sequence
+  runPromptSelect();
+}
+
+document.addEventListener("keydown", (e) => {
+  if (e.code === "Space" && gameEnded) {
+    e.preventDefault();
+    restartGame();
+  }
+});
+
 // ─── Kick off ────────────────────────────────────────────────────────────────
 runPromptSelect();
