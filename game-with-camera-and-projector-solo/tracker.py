@@ -1,10 +1,10 @@
 """
-Comically Large Paintbrush — Camera Tracker
-============================================
-Tracks up to TWO bright/colored objects via webcam, applies a perspective
-warp to map the physical canvas corners into a normalized 4:3 coordinate
-space, and exposes the result over a tiny HTTP server so the game can
-poll it.
+Comically Large Paintbrush (SOLO) — Camera Tracker
+===================================================
+Single-pencil variant. Tracks ONE bright/colored object via webcam, applies
+a perspective warp to map the physical canvas corners into a normalized 4:3
+coordinate space, and exposes the result over a tiny HTTP server so the
+game can poll it.
 
 Usage
 -----
@@ -15,8 +15,7 @@ Controls (OpenCV window)
   C          — enter corner-selection mode (click 4 corners of the canvas
                in order: top-left, top-right, bottom-right, bottom-left)
   B          — enter button-region calibration (click 4 corners per button
-               in this order: p1_large, p1_medium, p1_small, p1_undo,
-               p2_large, p2_medium, p2_small, p2_undo)
+               in this order: large, medium, small, undo)
                Hold a pencil over a calibrated region for ~1.5 s to trigger it.
   M          — cycle tracking mode: BRIGHT | RED | GREEN | BLUE | CUSTOM
   [ / ]      — decrease / increase brightness/HSV threshold
@@ -24,21 +23,15 @@ Controls (OpenCV window)
   Q / ESC    — quit
 
   CUSTOM mode only:
-    Left-click   — sample color under cursor → set Pencil 1 color
-    Right-click  — sample color under cursor → set Pencil 2 color
+    Left-click   — sample color under cursor → set pencil color
 
 HTTP endpoint (default port 5050)
 ----------------------------------
-  GET /state   →  JSON snapshot (polling, kept for compatibility):
-                  {
+  GET /state   →  {
                     "p1": {"x": 0-1, "y": 0-1, "active": bool},
-                    "p2": {"x": 0-1, "y": 0-1, "active": bool},
                     "reset": bool,
-                    "buttons": [name, ...]
+                    "buttons": [...]
                   }
-  GET /events  →  text/event-stream. One `data: <same JSON>` message per
-                  tracker frame, pushed as soon as it's available. This is
-                  what the game consumes.
   GET /health  →  {"ok": true}
 """
 
@@ -47,7 +40,7 @@ import numpy as np
 import json
 import threading
 import time
-from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
+from http.server import HTTPServer, BaseHTTPRequestHandler
 
 try:
     import pyrealsense2 as rs
@@ -59,8 +52,7 @@ except ImportError:
 PORT        = 5050
 CAMERA_IDX  = 2                    # Only used when USE_REALSENSE is False
 FLIP_H      = False
-ROTATE_180  = True                 # Camera is physically mounted upside down
-WINDOW_NAME = "CLPbrush Tracker  |  C=corners  M=mode  [/]=threshold  R=reset  Q=quit"
+WINDOW_NAME = "CLPbrush Tracker (SOLO)  |  C=corners  M=mode  [/]=threshold  R=reset  Q=quit"
 
 # ── RealSense config ──────────────────────────────────────────────────────────
 # The D455 exposes its IR imagers only through the librealsense SDK, NOT through
@@ -75,36 +67,27 @@ RS_EMITTER_ENABLED  = False        # D455's dot projector — off = clean passiv
 # Auto-exposure fights you here — it brightens the whole frame and lights up
 # every reflection. Start low (~500 µs) and raise if the LED itself is too dim.
 RS_AUTO_EXPOSURE    = False
-RS_EXPOSURE_US      = 700          # microseconds; typical useful range ~100–8000
+RS_EXPOSURE_US      = 1500         # microseconds; typical useful range ~100–8000
 RS_GAIN             = 16           # 16 = minimum on D455 IR
 
 MODES = ["BRIGHT", "RED", "GREEN", "BLUE", "CUSTOM"]
 
 # ── Shared state (thread-safe via lock) ────────────────────────────────────────
 _lock  = threading.Lock()
-# Pulsed whenever state changes, so the SSE /events handler can wake and push
-# a new frame instead of timer-polling. Single-consumer: if multiple clients
-# connect, one will win the wait() each tick and the others may miss frames
-# — fine for the local game, which is the only intended consumer.
-_state_bumped = threading.Event()
 _state = {
     "p1":      {"x": 0.5, "y": 0.5, "active": False},
-    "p2":      {"x": 0.5, "y": 0.5, "active": False},
     "reset":   False,
     "buttons": [],   # button names fired this tick; consumed by get_state()
 }
 _corners     = []
 _mode        = "BRIGHT"
-_thresh      = 110
+_thresh      = 150
 _hue_tol     = 15
 
-# Custom mode: two independent HSV color ranges
+# Custom mode: single HSV color range for the one pencil
 _c1_low  = np.array([100, 150, 100])   # Pencil 1 (blue-ish default)
 _c1_high = np.array([130, 255, 255])
-_c2_low  = np.array([35,  100,  80])   # Pencil 2 (green-ish default)
-_c2_high = np.array([85,  255, 255])
 _c1_set  = False                        # True once user has clicked a color
-_c2_set  = False
 
 # ── Button region calibration ──────────────────────────────────────────────────
 # Each button gets its own perspective transform built from 4 camera-pixel
@@ -112,10 +95,7 @@ _c2_set  = False
 # "inside" a button when its warped coordinate lands in the unit square [0,1]².
 # Fires immediately on the first frame the point enters; won't re-fire until
 # the point leaves and re-enters.
-BUTTON_NAMES = [
-    "p1_large", "p1_medium", "p1_small", "p1_undo",
-    "p2_large", "p2_medium", "p2_small", "p2_undo",
-]
+BUTTON_NAMES = ["large", "medium", "small", "undo"]
 _button_regions     = {}          # name → (M_btn, cam_corners) perspective matrix + display pts
 _button_setup_mode  = False
 _button_setup_idx   = 0           # index into BUTTON_NAMES
@@ -130,7 +110,6 @@ def get_state():
     with _lock:
         s = {
             "p1":      dict(_state["p1"]),
-            "p2":      dict(_state["p2"]),
             "reset":   _state["reset"],
             "buttons": list(_state["buttons"]),
         }
@@ -138,28 +117,26 @@ def get_state():
         _state["buttons"] = []
     return s
 
-def set_points(c1, c2, M_warp, out_w, out_h, frame_shape):
-    """Convert two optional pixel centroids to normalised state."""
+def set_point(c1, M_warp, out_w, out_h, frame_shape):
+    """Convert a single optional pixel centroid to normalised state."""
     with _lock:
-        for key, centroid in (("p1", c1), ("p2", c2)):
-            if centroid:
-                cx, cy = centroid
-                if M_warp is not None:
-                    v  = np.array([[[cx, cy]]], dtype="float32")
-                    r  = cv2.perspectiveTransform(v, M_warp)
-                    nx = float(r[0, 0, 0]) / out_w
-                    ny = float(r[0, 0, 1]) / out_h
-                    active = 0.0 <= nx <= 1.0 and 0.0 <= ny <= 1.0
-                else:
-                    h, w   = frame_shape[:2]
-                    nx, ny = cx / w, cy / h
-                    active = True
-                _state[key]["x"]      = nx
-                _state[key]["y"]      = ny
-                _state[key]["active"] = active
+        if c1:
+            cx, cy = c1
+            if M_warp is not None:
+                v  = np.array([[[cx, cy]]], dtype="float32")
+                r  = cv2.perspectiveTransform(v, M_warp)
+                nx = float(r[0, 0, 0]) / out_w
+                ny = float(r[0, 0, 1]) / out_h
+                active = 0.0 <= nx <= 1.0 and 0.0 <= ny <= 1.0
             else:
-                _state[key]["active"] = False
-    _state_bumped.set()
+                h, w   = frame_shape[:2]
+                nx, ny = cx / w, cy / h
+                active = True
+            _state["p1"]["x"]      = nx
+            _state["p1"]["y"]      = ny
+            _state["p1"]["active"] = active
+        else:
+            _state["p1"]["active"] = False
 
 def _point_in_button(M_btn, cx, cy):
     """Return True if (cx, cy) maps into the unit square via M_btn."""
@@ -168,29 +145,24 @@ def _point_in_button(M_btn, cx, cy):
     u, v_ = float(r[0, 0, 0]), float(r[0, 0, 1])
     return 0.0 <= u <= 1.0 and 0.0 <= v_ <= 1.0
 
-def check_button_hits(raw_centroids):
+def check_button_hits(centroid):
     """Fire a button the instant a centroid enters its region. Re-arms on exit."""
     global _button_locked
     if not _button_regions:
         return
     with _lock:
         for name, (M_btn, _) in _button_regions.items():
-            inside = any(
-                c and _point_in_button(M_btn, c[0], c[1])
-                for c in raw_centroids
-            )
+            inside = bool(centroid and _point_in_button(M_btn, centroid[0], centroid[1]))
             if inside:
                 if not _button_locked[name]:
                     _state["buttons"].append(name)
                     _button_locked[name] = True
-                    _state_bumped.set()
             else:
                 _button_locked[name] = False
 
 def set_reset():
     with _lock:
         _state["reset"] = True
-    _state_bumped.set()
 
 # ── HTTP server ───────────────────────────────────────────────────────────────
 class Handler(BaseHTTPRequestHandler):
@@ -206,35 +178,6 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
-        elif self.path.startswith("/events"):
-            # Server-Sent Events stream. Blocks on _state_bumped so we push
-            # exactly one frame per tracker update instead of timer-polling.
-            self.send_response(200)
-            self.send_header("Content-Type", "text/event-stream")
-            self.send_header("Cache-Control", "no-cache")
-            self.send_header("Connection", "keep-alive")
-            self.send_header("Access-Control-Allow-Origin", "*")
-            self.send_header("X-Accel-Buffering", "no")
-            self.end_headers()
-            try:
-                # Send an initial snapshot so the client has state before the
-                # next capture frame arrives.
-                body = json.dumps(get_state()).encode()
-                self.wfile.write(b"data: " + body + b"\n\n")
-                self.wfile.flush()
-                while True:
-                    # Wait for the next state change; fall through every 15s
-                    # to write a keepalive comment so intermediaries don't
-                    # close the idle connection.
-                    if _state_bumped.wait(timeout=15.0):
-                        _state_bumped.clear()
-                        body = json.dumps(get_state()).encode()
-                        self.wfile.write(b"data: " + body + b"\n\n")
-                    else:
-                        self.wfile.write(b": keepalive\n\n")
-                    self.wfile.flush()
-            except (BrokenPipeError, ConnectionResetError, OSError):
-                return
         elif self.path.startswith("/health"):
             body = b'{"ok":true}'
             self.send_response(200)
@@ -247,7 +190,7 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
 
 def run_server():
-    server = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
+    server = HTTPServer(("0.0.0.0", PORT), Handler)
     print(f"[HTTP] Serving on http://localhost:{PORT}")
     server.serve_forever()
 
@@ -269,11 +212,7 @@ def order_corners(pts):
     return np.roll(ordered, -tl_idx, axis=0)
 
 def build_transform(corners_px, out_w=800, out_h=600):
-    # Use the clicked order as-is (TL, TR, BR, BL). This lets the user
-    # freely assign any physical corner as "top-left" — e.g. clicking the
-    # physical bottom-right first rotates the whole coordinate space so
-    # that corner maps to (0, 0) in the normalized output.
-    src = np.array(corners_px, dtype="float32")
+    src = order_corners(corners_px)
     dst = np.array([[0,0],[out_w,0],[out_w,out_h],[0,out_h]], dtype="float32")
     return cv2.getPerspectiveTransform(src, dst), out_w, out_h
 
@@ -326,28 +265,10 @@ def find_centroid(mask):
         return None
     return int(M["m10"] / M["m00"]), int(M["m01"] / M["m00"])
 
-def find_two_centroids(mask):
-    """Return (c1, c2) — the two largest contour centroids, or None each."""
-    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    if not contours:
-        return None, None
-    contours = sorted(contours, key=cv2.contourArea, reverse=True)
-    results  = []
-    for c in contours[:2]:
-        if cv2.contourArea(c) < MIN_CONTOUR_AREA:
-            break
-        M = cv2.moments(c)
-        if M["m00"] == 0:
-            continue
-        results.append((int(M["m10"] / M["m00"]), int(M["m01"] / M["m00"])))
-    while len(results) < 2:
-        results.append(None)
-    return results[0], results[1]
-
 # ── Mouse callback ─────────────────────────────────────────────────────────────
 def on_mouse(event, x, y, flags, param):
     global _corners, _corner_mode
-    global _c1_low, _c1_high, _c2_low, _c2_high, _c1_set, _c2_set, _last_frame
+    global _c1_low, _c1_high, _c1_set, _last_frame
     global _button_setup_mode, _button_setup_idx, _button_setup_pts, _button_regions
 
     # Canvas corner-selection mode takes priority
@@ -391,18 +312,10 @@ def on_mouse(event, x, y, flags, param):
             _c1_low  = np.array([max(0,   int(h) - 15), max(0,   int(s) - 60), max(0,   int(v) - 60)])
             _c1_high = np.array([min(179, int(h) + 15), 255, 255])
             _c1_set  = True
-            print(f"[CUSTOM] Pencil 1 color -> H={h} S={s} V={v}")
-        elif event == cv2.EVENT_RBUTTONDOWN:
-            hsv = cv2.cvtColor(_last_frame, cv2.COLOR_BGR2HSV)
-            h, s, v = hsv[y, x]
-            _c2_low  = np.array([max(0,   int(h) - 15), max(0,   int(s) - 60), max(0,   int(v) - 60)])
-            _c2_high = np.array([min(179, int(h) + 15), 255, 255])
-            _c2_set  = True
-            print(f"[CUSTOM] Pencil 2 color -> H={h} S={s} V={v}")
+            print(f"[CUSTOM] Pencil color -> H={h} S={s} V={v}")
 
 # ── Drawing helpers ────────────────────────────────────────────────────────────
-P1_COLOR = (0, 255, 80)    # green
-P2_COLOR = (0, 200, 255)   # cyan
+PENCIL_COLOR = (0, 255, 80)    # green crosshair
 
 def draw_crosshair(display, centroid, color, label):
     if centroid is None:
@@ -615,12 +528,12 @@ def main():
     out_w  = 800
     out_h  = 600
 
-    print("\n=== Comically Large Paintbrush — Tracker (dual-point) ===")
+    print("\n=== Comically Large Paintbrush — Tracker (SOLO, single-point) ===")
     print(f"  HTTP state endpoint: http://localhost:{PORT}/state")
     print("  C = select canvas corners (4 clicks)")
-    print("  B = calibrate button regions (4 clicks per button × 8 buttons)")
+    print(f"  B = calibrate button regions (4 clicks per button × {len(BUTTON_NAMES)} buttons)")
     print("  M = cycle tracking mode")
-    print("  In CUSTOM mode: left-click = Pencil 1 color, right-click = Pencil 2 color")
+    print("  In CUSTOM mode: left-click = pick pencil color")
     print("  Q / ESC = quit\n")
 
     while True:
@@ -630,8 +543,6 @@ def main():
             time.sleep(0.05)
             continue
 
-        if ROTATE_180:
-            frame = cv2.rotate(frame, cv2.ROTATE_180)
         if FLIP_H:
             frame = cv2.flip(frame, 1)
 
@@ -644,28 +555,22 @@ def main():
 
         # ── Track ─────────────────────────────────────────────────────────────
         if _mode == "CUSTOM":
-            mask1    = make_hsv_mask(frame, _c1_low, _c1_high)
-            mask2    = make_hsv_mask(frame, _c2_low, _c2_high)
-            c1       = find_centroid(mask1)
-            c2       = find_centroid(mask2)
-            disp_mask = cv2.bitwise_or(mask1, mask2)
+            mask      = make_hsv_mask(frame, _c1_low, _c1_high)
         else:
             mask      = make_mask(frame, _mode, _thresh, _hue_tol)
-            c1, c2    = find_two_centroids(mask)
-            disp_mask = mask
+        c1        = find_centroid(mask)
+        disp_mask = mask
 
-        set_points(c1, c2, M_warp, out_w, out_h, frame.shape)
-        check_button_hits([c1, c2])
+        set_point(c1, M_warp, out_w, out_h, frame.shape)
+        check_button_hits(c1)
 
         # ── Retrieve normalised coords for display labels ──────────────────────
         with _lock:
-            s1, s2 = dict(_state["p1"]), dict(_state["p2"])
+            s1 = dict(_state["p1"])
 
-        # ── Draw crosshairs ────────────────────────────────────────────────────
-        lbl1 = f"P1 ({s1['x']:.3f}, {s1['y']:.3f})" if c1 else "P1"
-        lbl2 = f"P2 ({s2['x']:.3f}, {s2['y']:.3f})" if c2 else "P2"
-        draw_crosshair(display, c1, P1_COLOR,  lbl1)
-        draw_crosshair(display, c2, P2_COLOR,  lbl2)
+        # ── Draw crosshair ─────────────────────────────────────────────────────
+        lbl1 = f"P ({s1['x']:.3f}, {s1['y']:.3f})" if c1 else "P"
+        draw_crosshair(display, c1, PENCIL_COLOR, lbl1)
 
         # ── Canvas corners & outline ───────────────────────────────────────────
         for i, pt in enumerate(_corners):
@@ -675,9 +580,7 @@ def main():
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 200, 255), 2)
 
         if len(_corners) == 4:
-            # Draw the outline in clicked order so the quadrilateral visually
-            # matches the perspective mapping (TL -> TR -> BR -> BL).
-            pts = np.array(_corners, dtype=np.int32)
+            pts = order_corners(_corners).astype(int)
             cv2.polylines(display, [pts], True, (0, 200, 255), 2)
 
         # ── Button region overlays ────────────────────────────────────────────
@@ -707,14 +610,11 @@ def main():
         # ── CUSTOM mode color-swatch overlay ──────────────────────────────────
         if _mode == "CUSTOM":
             cv2.putText(display,
-                        "CUSTOM: Left-click=Pencil1  Right-click=Pencil2",
+                        "CUSTOM: Left-click = pick pencil color",
                         (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (200, 200, 0), 2)
             draw_color_swatch(display, _c1_low, _c1_high,
-                              "Pencil 1" + (" (set)" if _c1_set else " (default)"),
+                              "Pencil" + (" (set)" if _c1_set else " (default)"),
                               20, 70, _c1_set)
-            draw_color_swatch(display, _c2_low, _c2_high,
-                              "Pencil 2" + (" (set)" if _c2_set else " (default)"),
-                              20, 110, _c2_set)
 
         # ── HUD ───────────────────────────────────────────────────────────────
         warp_str  = "ON" if M_warp is not None else "OFF (press C)"

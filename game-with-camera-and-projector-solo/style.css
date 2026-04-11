@@ -1,0 +1,309 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+  /* border: 1px solid green; */
+}
+
+img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  position: absolute;
+  z-index: -1;
+}
+
+body {
+  background: #fff;
+  color: #000;
+  font-family: 'imaginaryfriend-bb', sans-serif;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: clamp(12px, 2vh, 28px) clamp(12px, 1.5vw, 28px);
+  gap: clamp(10px, 1.5vh, 20px);
+  overflow: hidden;
+  padding: 0rem;
+}
+
+/* ---- Timer ---- */
+.timer-display {
+  font-family: 'imaginaryfriend-bb', sans-serif;
+  font-size: clamp(1.8rem, 5vh, 4rem);
+  font-weight: 900;
+  color: #000;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: clamp(180px, 28vw, 220px);
+  height: clamp(52px, 8vh, 92px);
+  border: clamp(4px, 0.6vw, 10px) solid #000;
+  border-radius: 1px 6px 6px 6px;
+  background: #fff;
+  flex-shrink: 0;
+  margin-top: clamp(10px, 1.5vh, 20px);
+}
+
+/* Top-left prompt label shown during the drawing phase */
+.prompt-label {
+  position: fixed;
+  top: clamp(12px, 2vh, 28px);
+  left: clamp(12px, 2vw, 28px);
+  z-index: 50;
+  font-family: "Bangers", "Impact", sans-serif;
+  font-size: clamp(1.1rem, 2.4vh, 2rem);
+  letter-spacing: 0.05em;
+  color: #000;
+  background: #fff;
+  padding: 0.55em 1em;
+  border: 4px solid #000;
+  border-radius: 4px;
+  box-shadow: 6px 6px 0 #000;
+  transform: rotate(-1.2deg);
+  max-width: min(40vw, 520px);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.4s;
+}
+.prompt-label.visible {
+  opacity: 1;
+}
+
+/* ---- Main Game Layout ---- */
+.game-layout {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  gap: clamp(8px, 1.2vw, 20px);
+  align-items: stretch;
+  width: 100%;
+  padding: 0rem 5vw;
+  margin-bottom: clamp(10px, 1.5vh, 20px);
+}
+
+/* ---- Canvas ---- */
+.canvas-container {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.canvas-container canvas {
+  display: block;
+  max-height: 100%;
+  max-width: 100%;
+  aspect-ratio: 4 / 3;
+  height: 100%;
+  width: auto;
+  border: clamp(3px, 0.4vw, 7px) solid #000;
+}
+
+/* ---- Sidebars ---- */
+.sidebar {
+  width: clamp(100px, 12vw, 180px);
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+.brush-size-group {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: clamp(8px, 1.2vh, 18px);
+  margin-bottom: clamp(8px, 1.2vh, 18px);
+}
+
+/* ---- SVG Buttons ---- */
+.svg-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  width: 100%;
+  display: block;
+}
+
+.svg-btn svg {
+  width: 100%;
+  height: auto;
+  display: block;
+  fill: #fff;
+}
+
+.brush-btn:hover .btn-bg,
+.undo-btn:hover .btn-bg {
+  fill: #f5f5f5;
+}
+
+.brush-btn.active .btn-bg {
+  fill: #ffe8ef;
+}
+
+/* ---- Shared helpers ---- */
+.hidden { display: none !important; }
+
+/* ---- Comic Prompt Overlay ---- */
+.prompt-overlay {
+  position: fixed;
+  inset: 0;
+  background: radial-gradient(circle at 20% 20%, #fff 0%, #eaeaea 70%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  transition: opacity 0.6s ease, visibility 0.6s ease;
+}
+.prompt-overlay.fade-out {
+  opacity: 0;
+  visibility: hidden;
+}
+.comic-panel {
+  background: #fff;
+  border: 6px solid #000;
+  border-radius: 6px;
+  padding: 3rem 4rem;
+  box-shadow: 12px 12px 0 #000;
+  transform: rotate(-1.2deg);
+  text-align: center;
+  max-width: 90vw;
+}
+.prompt-title {
+  font-family: "Bangers", "Impact", sans-serif;
+  font-size: 3.5rem;
+  color: #000;
+  letter-spacing: 0.1em;
+  margin-bottom: 2rem;
+  text-shadow: 3px 3px 0 #ddd;
+}
+.prompt-scroller {
+  position: relative;
+  height: 96px;
+  width: min(80vw, 820px);
+  overflow: hidden;
+  border-top: 4px solid #000;
+  border-bottom: 4px solid #000;
+}
+.prompt-scroller-track {
+  display: flex;
+  flex-direction: column;
+  will-change: transform;
+}
+.prompt-option {
+  height: 96px;
+  line-height: 96px;
+  text-align: center;
+  font-family: "Bangers", "Impact", sans-serif;
+  font-size: 3rem;
+  color: #000;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.prompt-option.landed {
+  color: #e94560;
+  transform: scale(1.05);
+  transition: transform 0.3s ease, color 0.3s ease;
+}
+.scroller-highlight {
+  pointer-events: none;
+  position: absolute;
+  left: 0; right: 0;
+  top: 50%;
+  height: 6rem;
+  transform: translateY(-50%);
+  border-top: 3px dashed #000;
+  border-bottom: 3px dashed #000;
+}
+
+/* ---- Countdown video overlay ---- */
+.countdown-overlay {
+  position: fixed;
+  inset: 0;
+  background: #000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1200;
+}
+.countdown-overlay video {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+/* ---- Final framed caption overlay ---- */
+.caption-overlay {
+  position: fixed;
+  inset: 0;
+  background: radial-gradient(circle at 50% 30%, #fdf6e3 0%, #e8dcc0 80%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1.5rem;
+  z-index: 900;
+  animation: fadeIn 0.8s ease forwards;
+  padding: 2rem;
+}
+.frame-wrap {
+  position: relative;
+  height: 62vh;
+  aspect-ratio: 4 / 3;
+  max-width: 90vw;
+  animation: framePop 0.7s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+}
+.frame-img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: fill;
+  pointer-events: none;
+  z-index: 2;
+}
+.frame-drawing {
+  position: absolute;
+  top: 8%;
+  left: 9%;
+  width: 82%;
+  height: 84%;
+  background: #fff;
+  z-index: 1;
+}
+.plaque {
+  background: linear-gradient(#d9b382, #b5895a);
+  border: 4px solid #000;
+  border-radius: 8px;
+  padding: 0.9rem 2.5rem;
+  min-width: 40vw;
+  max-width: 80vw;
+  text-align: center;
+  box-shadow: 6px 6px 0 #000;
+  animation: plaqueSlide 0.6s 0.3s ease backwards;
+}
+.caption-text {
+  font-family: "Special Elite", "Courier New", monospace;
+  font-size: 2rem;
+  color: #1a0f00;
+  letter-spacing: 0.04em;
+}
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+@keyframes framePop {
+  0%   { transform: scale(0.5) rotate(-6deg); opacity: 0; }
+  100% { transform: scale(1) rotate(0deg);    opacity: 1; }
+}
+@keyframes plaqueSlide {
+  0%   { transform: translateY(30px); opacity: 0; }
+  100% { transform: translateY(0);    opacity: 1; }
+}

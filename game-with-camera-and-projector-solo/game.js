@@ -33,6 +33,13 @@ const OPTION_HEIGHT = 96; // must match .prompt-option height in CSS (px)
 function runPromptSelect() {
   chosenPrompt = PROMPTS[Math.floor(Math.random() * PROMPTS.length)];
 
+  // Pre-populate the top-left prompt label (stays hidden until startGame()).
+  const promptLabel = document.getElementById("promptLabel");
+  if (promptLabel) {
+    promptLabel.textContent = chosenPrompt.text;
+    promptLabel.classList.remove("visible");
+  }
+
   const scroller = document.getElementById("promptScroller");
   const track    = document.getElementById("promptScrollerTrack");
   track.innerHTML = "";
@@ -145,7 +152,8 @@ function startCountdownAfterPrompt() {
 }
 
 // ─── Tracker config ──────────────────────────────────────────────────────────
-const TRACKER_EVENTS_URL = "http://localhost:5050/events";
+const TRACKER_URL    = "http://localhost:5050/state";
+const POLL_INTERVAL  = 16;   // ms (~60 fps)
 const ACTIVE_RADIUS  = 20;   // px — minimum movement to consider a stroke point new
 const DROPOUT_MS     = 2000; // close a tracker stroke after this long with no active point
 const CHAIKIN_ITERS  = 2;    // smoothing passes (2 ≈ visibly smooth, cheap)
@@ -161,15 +169,11 @@ kaplay({
 const LINE_SPACING = 32;
 const LINE_COLOR   = [173, 216, 250];
 const MARGIN_COLOR = [230, 100, 100];
-const DIVIDER_X    = width() / 2;
+const STROKE_COLOR = [0, 0, 0];
 
-const playerState = {
-  1: { brushSize: 16, opacity: 1, strokes: [] },
-  2: { brushSize: 16, opacity: 1, strokes: [] },
-};
+const playerState = { brushSize: 16, opacity: 1, strokes: [] };
 
-let currentStroke        = null;
-let trackerCurrentStroke = null;   // stroke being built by the tracker
+let currentStroke = null;
 
 // ─── Ruled paper ─────────────────────────────────────────────────────────────
 function drawRuledLines() {
@@ -178,10 +182,6 @@ function drawRuledLines() {
   }
   drawLine({ p1:vec2(60,0),        p2:vec2(60,height()),        width:2, color:rgb(...MARGIN_COLOR) });
   drawLine({ p1:vec2(width()-60,0),p2:vec2(width()-60,height()),width:2, color:rgb(...MARGIN_COLOR) });
-}
-
-function drawDivider() {
-  drawLine({ p1:vec2(DIVIDER_X,0), p2:vec2(DIVIDER_X,height()), width:2, color:rgb(120,120,140) });
 }
 
 // ─── Timer ─────────────────────────────────────────────────────────────
@@ -212,12 +212,14 @@ function startTimer() {
 
 function startGame() {
   gameStarted = true;
+  document.getElementById("promptLabel")?.classList.add("visible");
   startTimer();
 }
 
 function endGame() {
   if (gameEnded) return;
   gameEnded = true;
+  document.getElementById("promptLabel")?.classList.remove("visible");
   setTimeout(showFramedResult, 400);
 }
 
@@ -228,11 +230,6 @@ function showFramedResult() {
   const finalCanvas    = document.getElementById("finalDrawingCanvas");
 
   frameImg.src = FRAME_IMAGES[Math.floor(Math.random() * FRAME_IMAGES.length)];
-
-  // Recolor every existing stroke to black; the render loop will redraw them.
-  for (const p of [1, 2]) {
-    for (const stroke of playerState[p].strokes) stroke.color = [0, 0, 0];
-  }
 
   const srcCanvas = document.getElementById("gameCanvas");
   finalCanvas.width  = srcCanvas.width;
@@ -248,36 +245,21 @@ function showFramedResult() {
   captionOverlay.classList.remove("hidden");
 }
 
-// ─── Canvas side helpers ──────────────────────────────────────────────────────
-function clampToSide(point, side) {
-  const x = side==="left"
-    ? Math.min(point.x, DIVIDER_X-1)
-    : Math.max(point.x, DIVIDER_X+1);
-  return vec2(x, point.y);
-}
-
 // ─── Mouse drawing ────────────────────────────────────────────────────────────
 onMousePress(() => {
   if (!gameStarted || gameEnded) return;
-  const mp   = mousePos();
-  const side = mp.x < DIVIDER_X ? "left" : "right";
-  const player = side==="left" ? 1 : 2;
-  const strokeColor = player===1 ? [231,76,60] : [52,152,219];
   currentStroke = {
-    points:[clampToSide(mp,side)],
-    color:strokeColor,
-    size:playerState[player].brushSize,
-    opacity:playerState[player].opacity,
-    side, player,
+    points:  [mousePos()],
+    color:   STROKE_COLOR,
+    size:    playerState.brushSize,
+    opacity: playerState.opacity,
   };
-  playerState[player].strokes.push(currentStroke);
+  playerState.strokes.push(currentStroke);
 });
 
 onMouseMove(() => {
   if (!isMouseDown() || !currentStroke || !gameStarted || gameEnded) return;
-  const mp = mousePos();
-  const onCorrectSide = currentStroke.side==="left" ? mp.x<DIVIDER_X : mp.x>=DIVIDER_X;
-  if (onCorrectSide) currentStroke.points.push(mp);
+  currentStroke.points.push(mousePos());
 });
 
 onMouseRelease(() => { currentStroke = null; });
@@ -285,119 +267,116 @@ onMouseRelease(() => { currentStroke = null; });
 // ─── Tracker polling ──────────────────────────────────────────────────────────
 //
 // The tracker publishes normalised coords (0-1, 0-1) within the warped canvas.
-// We map those to game pixels, determine which half the point is on, and
-// build strokes exactly as the mouse handler does.
-//
-// You can enable tracking for player 1, player 2, or both.
-// Right now it's wired to track BOTH halves: the left half of the physical
-// canvas drives player 1 and the right half drives player 2.
-// (This matches the split-canvas design — two separate pencils each stay on
-//  their own side, so each will naturally be in the correct normalised half.)
+// We map those to game pixels and build strokes exactly as the mouse
+// handler does.
 
-let trackerP1         = { x:0.5, y:0.5, active:false };
-let trackerP2         = { x:0.5, y:0.5, active:false };
+let trackerConnected  = false;
+let trackerPointer    = { x:0.5, y:0.5, active:false };
 
-// Stroke-per-player for the tracker (separate from mouse strokes)
-const trackerStroke       = { 1: null, 2: null };
-const trackerLastActiveAt = { 1: 0,    2: 0    }; // performance.now() of last drawable frame
+let trackerStroke       = null;
+let trackerLastActiveAt = 0;
 
-function handleTrackerPoint(point, playerOverride) {
-  const player = playerOverride;
-
+function handleTrackerPoint(point) {
   // Phase gating: outside of active play, always close immediately.
   if (!gameStarted || gameEnded) {
-    trackerStroke[player] = null;
+    trackerStroke = null;
     return;
   }
 
-  const rawGx = point.x * width();
-  const gy    = point.y * height();
-  const onCorrectSide = player === 1 ? rawGx < DIVIDER_X : rawGx >= DIVIDER_X;
-  const inBounds      = point.x >= 0 && point.x <= 1 && point.y >= 0 && point.y <= 1;
-  const drawable      = point.active && inBounds && onCorrectSide;
+  const gx = point.x * width();
+  const gy = point.y * height();
+  const inBounds = point.x >= 0 && point.x <= 1 && point.y >= 0 && point.y <= 1;
+  const drawable = point.active && inBounds;
 
   if (!drawable) {
     // Dropout tolerance: keep the stroke open until we've been untracked
     // for DROPOUT_MS. Then close it so the next sighting starts a new line.
-    if (trackerStroke[player] &&
-        performance.now() - trackerLastActiveAt[player] > DROPOUT_MS) {
-      trackerStroke[player] = null;
+    if (trackerStroke && performance.now() - trackerLastActiveAt > DROPOUT_MS) {
+      trackerStroke = null;
     }
     return;
   }
 
   // Drawable: refresh the dropout timer and extend (or start) the stroke.
-  trackerLastActiveAt[player] = performance.now();
+  trackerLastActiveAt = performance.now();
 
-  const pt          = vec2(rawGx, gy);
-  const strokeColor = player === 1 ? [231,76,60] : [52,152,219];
+  const pt = vec2(gx, gy);
 
-  if (!trackerStroke[player]) {
-    trackerStroke[player] = {
+  if (!trackerStroke) {
+    trackerStroke = {
       points: [pt],
-      color:  strokeColor,
-      size:   playerState[player].brushSize,
-      opacity: playerState[player].opacity,
-      side: player === 1 ? "left" : "right",
-      player,
+      color:  STROKE_COLOR,
+      size:   playerState.brushSize,
+      opacity: playerState.opacity,
       smooth: true,      // tracker strokes render with Chaikin smoothing
       _smoothed: null,   // cached smoothed points
       _smoothedLen: 0,   // raw-points length the cache was built for
     };
-    playerState[player].strokes.push(trackerStroke[player]);
+    playerState.strokes.push(trackerStroke);
   } else {
-    const last = trackerStroke[player].points.at(-1);
+    const last = trackerStroke.points.at(-1);
     const dx = pt.x - last.x, dy = pt.y - last.y;
     if (dx*dx + dy*dy > 4) {
-      trackerStroke[player].points.push(pt);
-      trackerStroke[player]._smoothed = null; // invalidate cache
+      trackerStroke.points.push(pt);
+      trackerStroke._smoothed = null; // invalidate cache
     }
   }
 }
 
-function applyTrackerFrame(data) {
-  if (data.reset) {
-    playerState[1].strokes = [];
-    playerState[2].strokes = [];
-    trackerStroke[1] = null;
-    trackerStroke[2] = null;
-  }
+async function pollTracker() {
+  try {
+    const res = await fetch(TRACKER_URL, { signal: AbortSignal.timeout(200) });
+    if (!res.ok) throw new Error("bad status");
+    const data = await res.json();
+    trackerConnected = true;
 
-  // Fire any button presses triggered by dwell in tracker
-  if (data.buttons) {
-    const sizeMap = { large: "28", medium: "16", small: "8" };
-    for (const btn of data.buttons) {
-      const [pStr, action] = btn.split("_");
-      const player = pStr === "p1" ? "1" : "2";
-      if (action === "undo") {
-        document.querySelector(`.undo-btn[data-player="${player}"]`)?.click();
-      } else if (sizeMap[action]) {
-        document.querySelector(`.brush-btn[data-player="${player}"][data-size="${sizeMap[action]}"]`)?.click();
+    if (data.reset) {
+      playerState.strokes = [];
+      trackerStroke = null;
+    }
+
+    // Fire any button presses triggered by dwell in tracker
+    if (data.buttons) {
+      const sizeMap = { large: "28", medium: "16", small: "8" };
+      for (const name of data.buttons) {
+        if (name === "undo") {
+          document.querySelector(`.undo-btn`)?.click();
+        } else if (sizeMap[name]) {
+          document.querySelector(`.brush-btn[data-size="${sizeMap[name]}"]`)?.click();
+        }
       }
     }
+
+    trackerPointer = data.p1 ?? { x:0.5, y:0.5, active:false };
+
+    handleTrackerPoint(trackerPointer);
+
+  } catch (_) {
+    trackerConnected = false;
+    trackerStroke = null;
   }
-
-  trackerP1 = data.p1 ?? { x:0.5, y:0.5, active:false };
-  trackerP2 = data.p2 ?? { x:0.5, y:0.5, active:false };
-
-  handleTrackerPoint(trackerP1, 1);
-  handleTrackerPoint(trackerP2, 2);
 }
 
-// Subscribe to the tracker's SSE stream. EventSource auto-reconnects on
-// drop, so if the Python script isn't running (or restarts), the browser
-// will keep trying silently in the background.
-function connectTracker() {
-  const es = new EventSource(TRACKER_EVENTS_URL);
-  es.onmessage = (ev) => {
-    try {
-      applyTrackerFrame(JSON.parse(ev.data));
-    } catch (_) { /* malformed frame — skip */ }
-  };
-  // onerror fires on disconnect; EventSource handles reconnection itself
-  // so we don't need to do anything here.
-}
-connectTracker();
+setInterval(pollTracker, POLL_INTERVAL);
+
+// ─── Tracker status overlay (small DOM element) ───────────────────────────────
+const statusEl = document.createElement("div");
+statusEl.style.cssText = `
+  position:fixed; bottom:12px; left:50%; transform:translateX(-50%);
+  background:rgba(0,0,0,0.55); color:#fff; font:13px/1.4 monospace;
+  padding:5px 14px; border-radius:20px; pointer-events:none; z-index:999;
+  transition:opacity .3s;
+`;
+document.body.appendChild(statusEl);
+
+setInterval(() => {
+  if (trackerConnected) {
+    statusEl.textContent = `📷 Tracker connected  |  P(${trackerPointer.x.toFixed(3)},${trackerPointer.y.toFixed(3)}) ${trackerPointer.active?"●":"○"}`;
+  } else {
+    statusEl.textContent = "📷 Tracker offline — drawing with mouse only";
+  }
+  statusEl.style.opacity = trackerConnected ? "1" : "0.6";
+}, 200);
 
 // ─── Chaikin corner-cutting (polyline smoothing) ─────────────────────────────
 function chaikinSmooth(points, iters) {
@@ -418,10 +397,7 @@ function chaikinSmooth(points, iters) {
 
 // ─── Render ───────────────────────────────────────────────────────────────────
 onDraw(() => {
-  if (!gameEnded) drawDivider();
-
-  const allStrokes = [...playerState[1].strokes, ...playerState[2].strokes];
-  for (const stroke of allStrokes) {
+  for (const stroke of playerState.strokes) {
     const c = rgb(stroke.color[0], stroke.color[1], stroke.color[2]);
     if (stroke.points.length === 1) {
       drawCircle({ pos: stroke.points[0], radius: stroke.size / 2, color: c, opacity: stroke.opacity });
@@ -442,16 +418,12 @@ onDraw(() => {
     }
   }
 
-  // Tracker cursor crosshairs — P1 (green) and P2 (cyan)
-  const cursors = [
-    { dot: trackerP1, col: rgb(0, 220, 80) },
-    { dot: trackerP2, col: rgb(0, 200, 255) },
-  ];
-  for (const { dot, col } of cursors) {
-    if (!dot.active) continue;
-    const gx = dot.x * width();
-    const gy = dot.y * height();
-    const r  = 12;
+  // Tracker cursor crosshair
+  if (trackerConnected && trackerPointer.active) {
+    const col = rgb(0, 220, 80);
+    const gx  = trackerPointer.x * width();
+    const gy  = trackerPointer.y * height();
+    const r   = 12;
     drawLine({ p1:vec2(gx-r,gy), p2:vec2(gx+r,gy), width:2, color:col, opacity:0.7 });
     drawLine({ p1:vec2(gx,gy-r), p2:vec2(gx,gy+r), width:2, color:col, opacity:0.7 });
     drawCircle({ pos:vec2(gx,gy), radius:5, color:col, opacity:0.8 });
@@ -461,8 +433,8 @@ onDraw(() => {
 // ─── Sidebar buttons ──────────────────────────────────────────────────────────
 document.querySelectorAll(".brush-btn").forEach(btn => {
   btn.addEventListener("click", () => {
-    const player=btn.dataset.player, size=Number(btn.dataset.size);
-    playerState[player].brushSize=size;
+    const size=Number(btn.dataset.size);
+    playerState.brushSize=size;
     btn.closest(".brush-size-group").querySelectorAll(".brush-btn").forEach(b=>b.classList.remove("active"));
     btn.classList.add("active");
   });
@@ -470,8 +442,7 @@ document.querySelectorAll(".brush-btn").forEach(btn => {
 
 document.querySelectorAll(".undo-btn").forEach(btn => {
   btn.addEventListener("click", () => {
-    const player=btn.dataset.player;
-    playerState[player].strokes.pop();
+    playerState.strokes.pop();
   });
 });
 
@@ -482,14 +453,10 @@ function restartGame() {
   gameEnded   = false;
 
   // Clear strokes
-  playerState[1].strokes = [];
-  playerState[2].strokes = [];
-  playerState[1].brushSize = 16;
-  playerState[2].brushSize = 16;
-  currentStroke        = null;
-  trackerCurrentStroke = null;
-  trackerStroke[1]     = null;
-  trackerStroke[2]     = null;
+  playerState.strokes = [];
+  playerState.brushSize = 16;
+  currentStroke  = null;
+  trackerStroke  = null;
 
   // Reset timer
   clearInterval(timerInterval);
@@ -498,6 +465,9 @@ function restartGame() {
 
   // Hide end-screen overlay
   document.getElementById("captionOverlay").classList.add("hidden");
+
+  // Hide the top-left prompt label until the next round starts drawing
+  document.getElementById("promptLabel")?.classList.remove("visible");
 
   // Re-show prompt overlay for the next round
   const promptOverlay = document.getElementById("promptOverlay");
