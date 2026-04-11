@@ -148,6 +148,8 @@ function startCountdownAfterPrompt() {
 const TRACKER_URL    = "http://localhost:5050/state";
 const POLL_INTERVAL  = 16;   // ms (~60 fps)
 const ACTIVE_RADIUS  = 20;   // px — minimum movement to consider a stroke point new
+const DROPOUT_MS     = 2000; // close a tracker stroke after this long with no active point
+const CHAIKIN_ITERS  = 2;    // smoothing passes (2 ≈ visibly smooth, cheap)
 
 kaplay({
   canvas: document.getElementById("gameCanvas"),
@@ -293,37 +295,42 @@ onMouseRelease(() => { currentStroke = null; });
 // (This matches the split-canvas design — two separate pencils each stay on
 //  their own side, so each will naturally be in the correct normalised half.)
 
-let trackerConnected  = false;
 let trackerP1         = { x:0.5, y:0.5, active:false };
 let trackerP2         = { x:0.5, y:0.5, active:false };
 
 // Stroke-per-player for the tracker (separate from mouse strokes)
-const trackerStroke = { 1: null, 2: null };
+const trackerStroke       = { 1: null, 2: null };
+const trackerLastActiveAt = { 1: 0,    2: 0    }; // performance.now() of last drawable frame
 
 function handleTrackerPoint(point, playerOverride) {
+  const player = playerOverride;
+
+  // Phase gating: outside of active play, always close immediately.
   if (!gameStarted || gameEnded) {
-    trackerStroke[playerOverride] = null;
-    return;
-  }
-  if (!point.active) {
-    trackerStroke[playerOverride] = null;
+    trackerStroke[player] = null;
     return;
   }
 
   const rawGx = point.x * width();
   const gy    = point.y * height();
+  const onCorrectSide = player === 1 ? rawGx < DIVIDER_X : rawGx >= DIVIDER_X;
+  const inBounds      = point.x >= 0 && point.x <= 1 && point.y >= 0 && point.y <= 1;
+  const drawable      = point.active && inBounds && onCorrectSide;
 
-  // If the point is off-canvas or on the wrong side, end the stroke — no clamping
-  const onCorrectSide = playerOverride === 1 ? rawGx < DIVIDER_X : rawGx >= DIVIDER_X;
-  if (!onCorrectSide || point.x < 0 || point.x > 1 || point.y < 0 || point.y > 1) {
-    trackerStroke[playerOverride] = null;
+  if (!drawable) {
+    // Dropout tolerance: keep the stroke open until we've been untracked
+    // for DROPOUT_MS. Then close it so the next sighting starts a new line.
+    if (trackerStroke[player] &&
+        performance.now() - trackerLastActiveAt[player] > DROPOUT_MS) {
+      trackerStroke[player] = null;
+    }
     return;
   }
 
-  const gx = rawGx;
-  const pt = vec2(gx, gy);
+  // Drawable: refresh the dropout timer and extend (or start) the stroke.
+  trackerLastActiveAt[player] = performance.now();
 
-  const player = playerOverride;
+  const pt          = vec2(rawGx, gy);
   const strokeColor = player === 1 ? [231,76,60] : [52,152,219];
 
   if (!trackerStroke[player]) {
@@ -334,6 +341,9 @@ function handleTrackerPoint(point, playerOverride) {
       opacity: playerState[player].opacity,
       side: player === 1 ? "left" : "right",
       player,
+      smooth: true,      // tracker strokes render with Chaikin smoothing
+      _smoothed: null,   // cached smoothed points
+      _smoothedLen: 0,   // raw-points length the cache was built for
     };
     playerState[player].strokes.push(trackerStroke[player]);
   } else {
@@ -341,6 +351,7 @@ function handleTrackerPoint(point, playerOverride) {
     const dx = pt.x - last.x, dy = pt.y - last.y;
     if (dx*dx + dy*dy > 4) {
       trackerStroke[player].points.push(pt);
+      trackerStroke[player]._smoothed = null; // invalidate cache
     }
   }
 }
@@ -350,7 +361,6 @@ async function pollTracker() {
     const res = await fetch(TRACKER_URL, { signal: AbortSignal.timeout(200) });
     if (!res.ok) throw new Error("bad status");
     const data = await res.json();
-    trackerConnected = true;
 
     if (data.reset) {
       playerState[1].strokes = [];
@@ -380,34 +390,28 @@ async function pollTracker() {
     handleTrackerPoint(trackerP2, 2);
 
   } catch (_) {
-    trackerConnected = false;
-    trackerStroke[1] = null;
-    trackerStroke[2] = null;
+    // No data this tick — silently ignore and try again on the next poll.
   }
 }
 
 setInterval(pollTracker, POLL_INTERVAL);
 
-// ─── Tracker status overlay (small DOM element) ───────────────────────────────
-const statusEl = document.createElement("div");
-statusEl.style.cssText = `
-  position:fixed; bottom:12px; left:50%; transform:translateX(-50%);
-  background:rgba(0,0,0,0.55); color:#fff; font:13px/1.4 monospace;
-  padding:5px 14px; border-radius:20px; pointer-events:none; z-index:999;
-  transition:opacity .3s;
-`;
-document.body.appendChild(statusEl);
-
-setInterval(() => {
-  if (trackerConnected) {
-    const p1s = `P1(${trackerP1.x.toFixed(3)},${trackerP1.y.toFixed(3)}) ${trackerP1.active?"●":"○"}`;
-    const p2s = `P2(${trackerP2.x.toFixed(3)},${trackerP2.y.toFixed(3)}) ${trackerP2.active?"●":"○"}`;
-    statusEl.textContent = `📷 Tracker connected  |  ${p1s}  |  ${p2s}`;
-  } else {
-    statusEl.textContent = "📷 Tracker offline — drawing with mouse only";
+// ─── Chaikin corner-cutting (polyline smoothing) ─────────────────────────────
+function chaikinSmooth(points, iters) {
+  if (points.length < 3) return points;
+  let pts = points;
+  for (let k = 0; k < iters; k++) {
+    const out = [pts[0]];
+    for (let i = 0; i < pts.length - 1; i++) {
+      const a = pts[i], b = pts[i + 1];
+      out.push(vec2(0.75*a.x + 0.25*b.x, 0.75*a.y + 0.25*b.y));
+      out.push(vec2(0.25*a.x + 0.75*b.x, 0.25*a.y + 0.75*b.y));
+    }
+    out.push(pts[pts.length - 1]);
+    pts = out;
   }
-  statusEl.style.opacity = trackerConnected ? "1" : "0.6";
-}, 200);
+  return pts;
+}
 
 // ─── Render ───────────────────────────────────────────────────────────────────
 onDraw(() => {
@@ -420,26 +424,34 @@ onDraw(() => {
       drawCircle({ pos: stroke.points[0], radius: stroke.size / 2, color: c, opacity: stroke.opacity });
       continue;
     }
-    for (let i = 1; i < stroke.points.length; i++) {
-      drawLine({ p1: stroke.points[i-1], p2: stroke.points[i], width: stroke.size, color: c, opacity: stroke.opacity, cap: "round" });
+
+    let renderPoints = stroke.points;
+    if (stroke.smooth && stroke.points.length >= 3) {
+      if (!stroke._smoothed || stroke._smoothedLen !== stroke.points.length) {
+        stroke._smoothed    = chaikinSmooth(stroke.points, CHAIKIN_ITERS);
+        stroke._smoothedLen = stroke.points.length;
+      }
+      renderPoints = stroke._smoothed;
+    }
+
+    for (let i = 1; i < renderPoints.length; i++) {
+      drawLine({ p1: renderPoints[i-1], p2: renderPoints[i], width: stroke.size, color: c, opacity: stroke.opacity, cap: "round" });
     }
   }
 
   // Tracker cursor crosshairs — P1 (green) and P2 (cyan)
-  if (trackerConnected) {
-    const cursors = [
-      { dot: trackerP1, col: rgb(0, 220, 80) },
-      { dot: trackerP2, col: rgb(0, 200, 255) },
-    ];
-    for (const { dot, col } of cursors) {
-      if (!dot.active) continue;
-      const gx = dot.x * width();
-      const gy = dot.y * height();
-      const r  = 12;
-      drawLine({ p1:vec2(gx-r,gy), p2:vec2(gx+r,gy), width:2, color:col, opacity:0.7 });
-      drawLine({ p1:vec2(gx,gy-r), p2:vec2(gx,gy+r), width:2, color:col, opacity:0.7 });
-      drawCircle({ pos:vec2(gx,gy), radius:5, color:col, opacity:0.8 });
-    }
+  const cursors = [
+    { dot: trackerP1, col: rgb(0, 220, 80) },
+    { dot: trackerP2, col: rgb(0, 200, 255) },
+  ];
+  for (const { dot, col } of cursors) {
+    if (!dot.active) continue;
+    const gx = dot.x * width();
+    const gy = dot.y * height();
+    const r  = 12;
+    drawLine({ p1:vec2(gx-r,gy), p2:vec2(gx+r,gy), width:2, color:col, opacity:0.7 });
+    drawLine({ p1:vec2(gx,gy-r), p2:vec2(gx,gy+r), width:2, color:col, opacity:0.7 });
+    drawCircle({ pos:vec2(gx,gy), radius:5, color:col, opacity:0.8 });
   }
 });
 
