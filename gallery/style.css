@@ -1,0 +1,169 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html, body {
+  height: 100%;
+}
+
+body {
+  background: radial-gradient(circle at 50% 20%, #fdf6e3 0%, #e8dcc0 80%);
+  color: #1a0f00;
+  font-family: 'imaginaryfriend-bb', 'Special Elite', 'Courier New', monospace;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-height: 100vh;
+}
+
+/* ---- Header ---- */
+.gallery-header {
+  padding: clamp(18px, 3vh, 36px) clamp(16px, 3vw, 48px) 0;
+  text-align: center;
+  flex-shrink: 0;
+}
+.gallery-header h1 {
+  font-family: "Bangers", "Impact", sans-serif;
+  font-size: clamp(2rem, 5vw, 4rem);
+  letter-spacing: 0.08em;
+  color: #000;
+  text-shadow: 4px 4px 0 #ddd;
+}
+.gallery-header .subtitle {
+  font-family: "Special Elite", "Courier New", monospace;
+  font-size: clamp(0.9rem, 1.3vw, 1.2rem);
+  margin-top: 0.4rem;
+  color: #4a3010;
+}
+
+/* ---- Scrolling stage ---- */
+.gallery-stage {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+}
+
+.gallery-track {
+  display: flex;
+  align-items: center;
+  gap: clamp(24px, 4vw, 72px);
+  padding: 0 clamp(20px, 4vw, 80px);
+  will-change: transform;
+}
+
+/* Each slide == frame + plaque, same structure as the end-of-game overlay. */
+.gallery-slide {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1rem;
+}
+
+.frame-wrap {
+  position: relative;
+  height: clamp(320px, 58vh, 640px);
+  aspect-ratio: 4 / 3;
+  animation: framePop 0.7s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+}
+.frame-img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: fill;
+  pointer-events: none;
+  z-index: 2;
+}
+.frame-drawing {
+  position: absolute;
+  top: 8%;
+  left: 9%;
+  width: 82%;
+  height: 84%;
+  background: #fff;
+  z-index: 1;
+  object-fit: contain;
+}
+
+.plaque {
+  background: linear-gradient(#d9b382, #b5895a);
+  border: 4px solid #000;
+  border-radius: 8px;
+  padding: 0.7rem 1.8rem;
+  min-width: 18vw;
+  max-width: 80vw;
+  text-align: center;
+  box-shadow: 6px 6px 0 #000;
+}
+.plaque .caption-text {
+  font-family: "Special Elite", "Courier New", monospace;
+  font-size: clamp(0.95rem, 1.6vw, 1.6rem);
+  color: #1a0f00;
+  letter-spacing: 0.04em;
+}
+.plaque .prompt-text {
+  display: block;
+  font-family: "Bangers", "Impact", sans-serif;
+  font-size: clamp(0.75rem, 1.1vw, 1rem);
+  color: #3b240a;
+  letter-spacing: 0.08em;
+  margin-top: 0.25rem;
+  opacity: 0.85;
+}
+
+/* ---- Status + footer ---- */
+.gallery-status {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: "Bangers", "Impact", sans-serif;
+  font-size: clamp(1.2rem, 2.4vw, 2rem);
+  color: #2a1b07;
+  letter-spacing: 0.08em;
+  pointer-events: none;
+  transition: opacity 0.4s ease;
+}
+.gallery-status.hidden {
+  opacity: 0;
+}
+
+.gallery-footer {
+  padding: clamp(10px, 1.5vh, 18px) clamp(16px, 3vw, 48px);
+  display: flex;
+  gap: 0.8rem;
+  justify-content: center;
+  font-family: "Special Elite", "Courier New", monospace;
+  font-size: clamp(0.75rem, 1vw, 1rem);
+  color: #4a3010;
+  flex-shrink: 0;
+}
+.gallery-footer kbd {
+  background: #fff;
+  border: 2px solid #000;
+  border-radius: 4px;
+  padding: 0.05rem 0.4rem;
+  font-family: inherit;
+  font-size: 0.9em;
+  box-shadow: 2px 2px 0 #000;
+}
+.gallery-footer .sep { opacity: 0.5; }
+
+@keyframes framePop {
+  0%   { transform: scale(0.92) rotate(-2deg); opacity: 0; }
+  100% { transform: scale(1) rotate(0deg);     opacity: 1; }
+}
+
+/* Reduced motion: stop the scroll animation. */
+@media (prefers-reduced-motion: reduce) {
+  .gallery-track {
+    transition: none !important;
+  }
+}

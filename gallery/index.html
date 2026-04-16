@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Comically Large Gallery</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="https://use.typekit.net/gau8gla.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bangers&family=Special+Elite&display=swap" rel="stylesheet">
+</head>
+<body>
+  <header class="gallery-header">
+    <h1>THE COMICALLY LARGE GALLERY</h1>
+    <p class="subtitle">A scrolling wall of timed masterpieces.</p>
+  </header>
+
+  <main class="gallery-stage">
+    <div id="galleryTrack" class="gallery-track" aria-live="polite"></div>
+
+    <div id="galleryStatus" class="gallery-status">
+      Loading drawings&hellip;
+    </div>
+  </main>
+
+  <footer class="gallery-footer">
+    <span id="galleryCount">0 drawings</span>
+    <span class="sep">&bull;</span>
+    <span>Press <kbd>Space</kbd> to pause scrolling</span>
+  </footer>
+
+  <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
+  <script src="../env/config.js"></script>
+  <script src="../env/supabase-client.js"></script>
+  <script src="gallery.js"></script>
+</body>
+</html>
