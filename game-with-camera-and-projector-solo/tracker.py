@@ -40,7 +40,7 @@ import numpy as np
 import json
 import threading
 import time
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 
 try:
     import pyrealsense2 as rs
@@ -52,6 +52,7 @@ except ImportError:
 PORT        = 5050
 CAMERA_IDX  = 2                    # Only used when USE_REALSENSE is False
 FLIP_H      = False
+ROTATE_180  = False                 # Camera is physically mounted upside down
 WINDOW_NAME = "CLPbrush Tracker (SOLO)  |  C=corners  M=mode  [/]=threshold  R=reset  Q=quit"
 
 # ── RealSense config ──────────────────────────────────────────────────────────
@@ -67,13 +68,18 @@ RS_EMITTER_ENABLED  = False        # D455's dot projector — off = clean passiv
 # Auto-exposure fights you here — it brightens the whole frame and lights up
 # every reflection. Start low (~500 µs) and raise if the LED itself is too dim.
 RS_AUTO_EXPOSURE    = False
-RS_EXPOSURE_US      = 1500         # microseconds; typical useful range ~100–8000
+RS_EXPOSURE_US      = 700          # microseconds; typical useful range ~100–8000
 RS_GAIN             = 16           # 16 = minimum on D455 IR
 
 MODES = ["BRIGHT", "RED", "GREEN", "BLUE", "CUSTOM"]
 
 # ── Shared state (thread-safe via lock) ────────────────────────────────────────
 _lock  = threading.Lock()
+# Pulsed whenever state changes, so the SSE /events handler can wake and push
+# a new frame instead of timer-polling. Single-consumer: if multiple clients
+# connect, one will win the wait() each tick and the others may miss frames
+# — fine for the local game, which is the only intended consumer.
+_state_bumped = threading.Event()
 _state = {
     "p1":      {"x": 0.5, "y": 0.5, "active": False},
     "reset":   False,
@@ -81,7 +87,7 @@ _state = {
 }
 _corners     = []
 _mode        = "BRIGHT"
-_thresh      = 150
+_thresh      = 50
 _hue_tol     = 15
 
 # Custom mode: single HSV color range for the one pencil
@@ -137,6 +143,7 @@ def set_point(c1, M_warp, out_w, out_h, frame_shape):
             _state["p1"]["active"] = active
         else:
             _state["p1"]["active"] = False
+    _state_bumped.set()
 
 def _point_in_button(M_btn, cx, cy):
     """Return True if (cx, cy) maps into the unit square via M_btn."""
@@ -157,12 +164,14 @@ def check_button_hits(centroid):
                 if not _button_locked[name]:
                     _state["buttons"].append(name)
                     _button_locked[name] = True
+                    _state_bumped.set()
             else:
                 _button_locked[name] = False
 
 def set_reset():
     with _lock:
         _state["reset"] = True
+    _state_bumped.set()
 
 # ── HTTP server ───────────────────────────────────────────────────────────────
 class Handler(BaseHTTPRequestHandler):
@@ -178,6 +187,35 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
+        elif self.path.startswith("/events"):
+            # Server-Sent Events stream. Blocks on _state_bumped so we push
+            # exactly one frame per tracker update instead of timer-polling.
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Cache-Control", "no-cache")
+            self.send_header("Connection", "keep-alive")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("X-Accel-Buffering", "no")
+            self.end_headers()
+            try:
+                # Send an initial snapshot so the client has state before the
+                # next capture frame arrives.
+                body = json.dumps(get_state()).encode()
+                self.wfile.write(b"data: " + body + b"\n\n")
+                self.wfile.flush()
+                while True:
+                    # Wait for the next state change; fall through every 15s
+                    # to write a keepalive comment so intermediaries don't
+                    # close the idle connection.
+                    if _state_bumped.wait(timeout=15.0):
+                        _state_bumped.clear()
+                        body = json.dumps(get_state()).encode()
+                        self.wfile.write(b"data: " + body + b"\n\n")
+                    else:
+                        self.wfile.write(b": keepalive\n\n")
+                    self.wfile.flush()
+            except (BrokenPipeError, ConnectionResetError, OSError):
+                return
         elif self.path.startswith("/health"):
             body = b'{"ok":true}'
             self.send_response(200)
@@ -190,7 +228,7 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
 
 def run_server():
-    server = HTTPServer(("0.0.0.0", PORT), Handler)
+    server = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
     print(f"[HTTP] Serving on http://localhost:{PORT}")
     server.serve_forever()
 
@@ -212,7 +250,11 @@ def order_corners(pts):
     return np.roll(ordered, -tl_idx, axis=0)
 
 def build_transform(corners_px, out_w=800, out_h=600):
-    src = order_corners(corners_px)
+    # Use the clicked order as-is (TL, TR, BR, BL). This lets the user
+    # freely assign any physical corner as "top-left" — e.g. clicking the
+    # physical bottom-right first rotates the whole coordinate space so
+    # that corner maps to (0, 0) in the normalized output.
+    src = np.array(corners_px, dtype="float32")
     dst = np.array([[0,0],[out_w,0],[out_w,out_h],[0,out_h]], dtype="float32")
     return cv2.getPerspectiveTransform(src, dst), out_w, out_h
 
@@ -543,6 +585,8 @@ def main():
             time.sleep(0.05)
             continue
 
+        if ROTATE_180:
+            frame = cv2.rotate(frame, cv2.ROTATE_180)
         if FLIP_H:
             frame = cv2.flip(frame, 1)
 
@@ -580,7 +624,9 @@ def main():
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 200, 255), 2)
 
         if len(_corners) == 4:
-            pts = order_corners(_corners).astype(int)
+            # Draw the outline in clicked order so the quadrilateral visually
+            # matches the perspective mapping (TL -> TR -> BR -> BL).
+            pts = np.array(_corners, dtype=np.int32)
             cv2.polylines(display, [pts], True, (0, 200, 255), 2)
 
         # ── Button region overlays ────────────────────────────────────────────
