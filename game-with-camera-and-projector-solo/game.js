@@ -1,21 +1,7 @@
 // ─── Prompt & Caption data ───────────────────────────────────────────────────
-const PROMPTS = [
-  { text: "A pig on the moon",                 caption: "1936: Pigs did it first." },
-  { text: "Wizards ordering coffee",           caption: "Double-shot, extra enchantment." },
-  { text: "Fish out of water",                 caption: "Gills optional, panic mandatory." },
-  { text: "The biggest fish to fry",           caption: "Bigger boat. Bigger pan." },
-  { text: "A bug in a rug",                    caption: "Cozy. Suspiciously cozy." },
-  { text: "Hit the nail on the head",          caption: "Ouch. But accurate." },
-  { text: "Salt and pepper dancing together",  caption: "A seasoned romance." },
-  { text: "Dog Fight",                         caption: "Winner takes the bone." },
-  { text: "Walter gets ice cream",             caption: "Walter earned this." },
-  { text: "Under the weather",                 caption: "Forecast: 100% blanket." },
-  { text: "As easy as big juicy pie",          caption: "A slice above the rest." },
-  { text: "Spilt milk",                        caption: "No crying. House rules." },
-  { text: "Wild goose on the loose",           caption: "Honk if you've seen him." },
-  { text: "The elephant in the room",          caption: "We are NOT going to talk about it." },
-  { text: "A giant destroying a village",      caption: "Rent was too high anyway." },
-];
+// Prompts are loaded from ../prompts.json so both games share a single
+// editable source. Populated before runPromptSelect() runs for the first time.
+let PROMPTS = [];
 
 const FRAME_IMAGES = [
   "../assets/pictureframesAsset 1 1.png",
@@ -26,11 +12,15 @@ const FRAME_IMAGES = [
 let chosenPrompt = null;
 let gameStarted  = false;
 let gameEnded    = false;
+// Incremented on every new round. Stale callbacks from earlier rounds compare
+// against this to bail out, preventing timers/state from stacking on restart.
+let roundId      = 0;
 
 // ─── Prompt select animation (scrolling list) ────────────────────────────────
 const OPTION_HEIGHT = 96; // must match .prompt-option height in CSS (px)
 
 function runPromptSelect() {
+  const myRound = ++roundId;
   chosenPrompt = PROMPTS[Math.floor(Math.random() * PROMPTS.length)];
 
   // Pre-populate the top-left prompt label (stays hidden until startGame()).
@@ -87,8 +77,9 @@ function runPromptSelect() {
         if (landed) landed.classList.add("landed");
 
         setTimeout(() => {
-          startCountdownAfterPrompt();
-        }, 900);
+          if (myRound !== roundId) return; // a newer round has started; bail
+          startCountdownAfterPrompt(myRound);
+        }, 5000);
       }
     }
     requestAnimationFrame(step);
@@ -102,7 +93,7 @@ function runPromptSelect() {
 }
 
 // ─── Countdown video ─────────────────────────────────────────────────────────
-function startCountdownAfterPrompt() {
+function startCountdownAfterPrompt(myRound) {
   const promptOverlay    = document.getElementById("promptOverlay");
   const countdownOverlay = document.getElementById("countdownOverlay");
   const video            = document.getElementById("countdownVideo");
@@ -111,6 +102,7 @@ function startCountdownAfterPrompt() {
   const finish = () => {
     if (finished) return;
     finished = true;
+    if (myRound !== roundId) return; // stale round, do not start the game
     countdownOverlay.classList.add("hidden");
     startGame();
   };
@@ -121,6 +113,7 @@ function startCountdownAfterPrompt() {
   const beginPlayback = () => {
     countdownOverlay.classList.remove("hidden");
     try { video.currentTime = 0; } catch (_) {}
+    try { video.playbackRate = 1.3; } catch (_) {}
     const p = video.play();
     const afterStart = () => {
       promptOverlay.classList.add("fade-out");
@@ -152,10 +145,9 @@ function startCountdownAfterPrompt() {
 }
 
 // ─── Tracker config ──────────────────────────────────────────────────────────
-const TRACKER_URL    = "http://localhost:5050/state";
-const POLL_INTERVAL  = 16;   // ms (~60 fps)
+const TRACKER_EVENTS_URL = "http://localhost:5050/events";
 const ACTIVE_RADIUS  = 20;   // px — minimum movement to consider a stroke point new
-const DROPOUT_MS     = 2000; // close a tracker stroke after this long with no active point
+const DROPOUT_MS     = 500; // close a tracker stroke after this long with no active point
 const CHAIKIN_ITERS  = 2;    // smoothing passes (2 ≈ visibly smooth, cheap)
 
 kaplay({
@@ -185,7 +177,7 @@ function drawRuledLines() {
 }
 
 // ─── Timer ─────────────────────────────────────────────────────────────
-const TOTAL_TIME = 90;
+const TOTAL_TIME = 60;
 let timeLeft     = TOTAL_TIME;
 
 const timerDisplay = document.querySelector(".timer-display");
@@ -199,6 +191,9 @@ function renderTimer() {
 renderTimer();
 
 function startTimer() {
+  clearInterval(timerInterval); // defensive: never stack intervals
+  timeLeft = TOTAL_TIME;
+  renderTimer();
   timerInterval = setInterval(() => {
     timeLeft--;
     if (timeLeft <= 0) {
@@ -243,6 +238,21 @@ function showFramedResult() {
 
   captionText.textContent = chosenPrompt?.caption || "";
   captionOverlay.classList.remove("hidden");
+
+  // Push the final drawing to the gallery. Non-blocking; failures are logged.
+  uploadFinalDrawing(finalCanvas, chosenPrompt);
+}
+
+function uploadFinalDrawing(canvas, prompt) {
+  const api = window.ComicallyLargeDrawings;
+  if (!api || typeof api.uploadDrawing !== "function") return;
+  canvas.toBlob((blob) => {
+    if (!blob) return;
+    api.uploadDrawing(blob, {
+      caption: prompt?.caption || "",
+      prompt:  prompt?.text    || "",
+    }).catch(err => console.warn("[gallery upload] failed:", err));
+  }, "image/png");
 }
 
 // ─── Mouse drawing ────────────────────────────────────────────────────────────
@@ -270,7 +280,6 @@ onMouseRelease(() => { currentStroke = null; });
 // We map those to game pixels and build strokes exactly as the mouse
 // handler does.
 
-let trackerConnected  = false;
 let trackerPointer    = { x:0.5, y:0.5, active:false };
 
 let trackerStroke       = null;
@@ -297,8 +306,13 @@ function handleTrackerPoint(point) {
     return;
   }
 
-  // Drawable: refresh the dropout timer and extend (or start) the stroke.
-  trackerLastActiveAt = performance.now();
+  // If the tracker was untracked longer than DROPOUT_MS, break the stroke so
+  // the next sighting starts a new line instead of connecting across the gap.
+  const now = performance.now();
+  if (trackerStroke && now - trackerLastActiveAt > DROPOUT_MS) {
+    trackerStroke = null;
+  }
+  trackerLastActiveAt = now;
 
   const pt = vec2(gx, gy);
 
@@ -323,60 +337,41 @@ function handleTrackerPoint(point) {
   }
 }
 
-async function pollTracker() {
-  try {
-    const res = await fetch(TRACKER_URL, { signal: AbortSignal.timeout(200) });
-    if (!res.ok) throw new Error("bad status");
-    const data = await res.json();
-    trackerConnected = true;
-
-    if (data.reset) {
-      playerState.strokes = [];
-      trackerStroke = null;
-    }
-
-    // Fire any button presses triggered by dwell in tracker
-    if (data.buttons) {
-      const sizeMap = { large: "28", medium: "16", small: "8" };
-      for (const name of data.buttons) {
-        if (name === "undo") {
-          document.querySelector(`.undo-btn`)?.click();
-        } else if (sizeMap[name]) {
-          document.querySelector(`.brush-btn[data-size="${sizeMap[name]}"]`)?.click();
-        }
-      }
-    }
-
-    trackerPointer = data.p1 ?? { x:0.5, y:0.5, active:false };
-
-    handleTrackerPoint(trackerPointer);
-
-  } catch (_) {
-    trackerConnected = false;
+function applyTrackerFrame(data) {
+  if (data.reset) {
+    playerState.strokes = [];
     trackerStroke = null;
   }
+
+  // Fire any button presses triggered by dwell in tracker
+  if (data.buttons) {
+    const sizeMap = { large: "28", medium: "16", small: "8" };
+    for (const name of data.buttons) {
+      if (name === "undo") {
+        document.querySelector(`.undo-btn`)?.click();
+      } else if (sizeMap[name]) {
+        document.querySelector(`.brush-btn[data-size="${sizeMap[name]}"]`)?.click();
+      }
+    }
+  }
+
+  trackerPointer = data.p1 ?? { x:0.5, y:0.5, active:false };
+  handleTrackerPoint(trackerPointer);
 }
 
-setInterval(pollTracker, POLL_INTERVAL);
-
-// ─── Tracker status overlay (small DOM element) ───────────────────────────────
-const statusEl = document.createElement("div");
-statusEl.style.cssText = `
-  position:fixed; bottom:12px; left:50%; transform:translateX(-50%);
-  background:rgba(0,0,0,0.55); color:#fff; font:13px/1.4 monospace;
-  padding:5px 14px; border-radius:20px; pointer-events:none; z-index:999;
-  transition:opacity .3s;
-`;
-document.body.appendChild(statusEl);
-
-setInterval(() => {
-  if (trackerConnected) {
-    statusEl.textContent = `📷 Tracker connected  |  P(${trackerPointer.x.toFixed(3)},${trackerPointer.y.toFixed(3)}) ${trackerPointer.active?"●":"○"}`;
-  } else {
-    statusEl.textContent = "📷 Tracker offline — drawing with mouse only";
-  }
-  statusEl.style.opacity = trackerConnected ? "1" : "0.6";
-}, 200);
+// Subscribe to the tracker's SSE stream. EventSource auto-reconnects on
+// drop, so if the Python script isn't running (or restarts), the browser
+// will keep trying silently in the background.
+function connectTracker() {
+  const es = new EventSource(TRACKER_EVENTS_URL);
+  es.onmessage = (ev) => {
+    try {
+      applyTrackerFrame(JSON.parse(ev.data));
+    } catch (_) { /* malformed frame — skip */ }
+  };
+  // onerror fires on disconnect; EventSource handles reconnection itself.
+}
+connectTracker();
 
 // ─── Chaikin corner-cutting (polyline smoothing) ─────────────────────────────
 function chaikinSmooth(points, iters) {
@@ -419,7 +414,7 @@ onDraw(() => {
   }
 
   // Tracker cursor crosshair
-  if (trackerConnected && trackerPointer.active) {
+  if (trackerPointer.active) {
     const col = rgb(0, 220, 80);
     const gx  = trackerPointer.x * width();
     const gy  = trackerPointer.y * height();
@@ -486,11 +481,15 @@ function restartGame() {
 }
 
 document.addEventListener("keydown", (e) => {
-  if (e.code === "Space" && gameEnded) {
+  if (e.code === "Space") {
     e.preventDefault();
     restartGame();
   }
 });
 
 // ─── Kick off ────────────────────────────────────────────────────────────────
-runPromptSelect();
+fetch("../prompts.json")
+  .then((r) => r.json())
+  .then((data) => { PROMPTS = data; })
+  .catch((err) => { console.error("Failed to load prompts.json:", err); })
+  .finally(() => { runPromptSelect(); });

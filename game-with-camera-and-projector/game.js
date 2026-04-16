@@ -1,21 +1,7 @@
 // ─── Prompt & Caption data ───────────────────────────────────────────────────
-const PROMPTS = [
-  { text: "A pig on the moon",                 caption: "1936: Pigs did it first." },
-  { text: "Wizards ordering coffee",           caption: "Double-shot, extra enchantment." },
-  { text: "Fish out of water",                 caption: "Gills optional, panic mandatory." },
-  { text: "The biggest fish to fry",           caption: "Bigger boat. Bigger pan." },
-  { text: "A bug in a rug",                    caption: "Cozy. Suspiciously cozy." },
-  { text: "Hit the nail on the head",          caption: "Ouch. But accurate." },
-  { text: "Salt and pepper dancing together",  caption: "A seasoned romance." },
-  { text: "Dog Fight",                         caption: "Winner takes the bone." },
-  { text: "Walter gets ice cream",             caption: "Walter earned this." },
-  { text: "Under the weather",                 caption: "Forecast: 100% blanket." },
-  { text: "As easy as big juicy pie",          caption: "A slice above the rest." },
-  { text: "Spilt milk",                        caption: "No crying. House rules." },
-  { text: "Wild goose on the loose",           caption: "Honk if you've seen him." },
-  { text: "The elephant in the room",          caption: "We are NOT going to talk about it." },
-  { text: "A giant destroying a village",      caption: "Rent was too high anyway." },
-];
+// Prompts are loaded from ../prompts.json so both games share a single
+// editable source. Populated before runPromptSelect() runs for the first time.
+let PROMPTS = [];
 
 const FRAME_IMAGES = [
   "../assets/pictureframesAsset 1 1.png",
@@ -26,11 +12,15 @@ const FRAME_IMAGES = [
 let chosenPrompt = null;
 let gameStarted  = false;
 let gameEnded    = false;
+// Incremented on every new round. Stale callbacks from earlier rounds compare
+// against this to bail out, preventing timers/state from stacking on restart.
+let roundId      = 0;
 
 // ─── Prompt select animation (scrolling list) ────────────────────────────────
 const OPTION_HEIGHT = 96; // must match .prompt-option height in CSS (px)
 
 function runPromptSelect() {
+  const myRound = ++roundId;
   chosenPrompt = PROMPTS[Math.floor(Math.random() * PROMPTS.length)];
 
   const scroller = document.getElementById("promptScroller");
@@ -80,8 +70,9 @@ function runPromptSelect() {
         if (landed) landed.classList.add("landed");
 
         setTimeout(() => {
-          startCountdownAfterPrompt();
-        }, 900);
+          if (myRound !== roundId) return; // a newer round has started; bail
+          startCountdownAfterPrompt(myRound);
+        }, 5000);
       }
     }
     requestAnimationFrame(step);
@@ -95,7 +86,7 @@ function runPromptSelect() {
 }
 
 // ─── Countdown video ─────────────────────────────────────────────────────────
-function startCountdownAfterPrompt() {
+function startCountdownAfterPrompt(myRound) {
   const promptOverlay    = document.getElementById("promptOverlay");
   const countdownOverlay = document.getElementById("countdownOverlay");
   const video            = document.getElementById("countdownVideo");
@@ -104,6 +95,7 @@ function startCountdownAfterPrompt() {
   const finish = () => {
     if (finished) return;
     finished = true;
+    if (myRound !== roundId) return; // stale round, do not start the game
     countdownOverlay.classList.add("hidden");
     startGame();
   };
@@ -114,6 +106,7 @@ function startCountdownAfterPrompt() {
   const beginPlayback = () => {
     countdownOverlay.classList.remove("hidden");
     try { video.currentTime = 0; } catch (_) {}
+    try { video.playbackRate = 1.3; } catch (_) {}
     const p = video.play();
     const afterStart = () => {
       promptOverlay.classList.add("fade-out");
@@ -147,7 +140,7 @@ function startCountdownAfterPrompt() {
 // ─── Tracker config ──────────────────────────────────────────────────────────
 const TRACKER_EVENTS_URL = "http://localhost:5050/events";
 const ACTIVE_RADIUS  = 20;   // px — minimum movement to consider a stroke point new
-const DROPOUT_MS     = 2000; // close a tracker stroke after this long with no active point
+const DROPOUT_MS     = 500; // close a tracker stroke after this long with no active point
 const CHAIKIN_ITERS  = 2;    // smoothing passes (2 ≈ visibly smooth, cheap)
 
 kaplay({
@@ -185,7 +178,7 @@ function drawDivider() {
 }
 
 // ─── Timer ─────────────────────────────────────────────────────────────
-const TOTAL_TIME = 90;
+const TOTAL_TIME = 60;
 let timeLeft     = TOTAL_TIME;
 
 const timerDisplay = document.querySelector(".timer-display");
@@ -199,6 +192,9 @@ function renderTimer() {
 renderTimer();
 
 function startTimer() {
+  clearInterval(timerInterval); // defensive: never stack intervals
+  timeLeft = TOTAL_TIME;
+  renderTimer();
   timerInterval = setInterval(() => {
     timeLeft--;
     if (timeLeft <= 0) {
@@ -246,6 +242,21 @@ function showFramedResult() {
 
   captionText.textContent = chosenPrompt?.caption || "";
   captionOverlay.classList.remove("hidden");
+
+  // Push the final drawing to the gallery. Non-blocking; failures are logged.
+  uploadFinalDrawing(finalCanvas, chosenPrompt);
+}
+
+function uploadFinalDrawing(canvas, prompt) {
+  const api = window.ComicallyLargeDrawings;
+  if (!api || typeof api.uploadDrawing !== "function") return;
+  canvas.toBlob((blob) => {
+    if (!blob) return;
+    api.uploadDrawing(blob, {
+      caption: prompt?.caption || "",
+      prompt:  prompt?.text    || "",
+    }).catch(err => console.warn("[gallery upload] failed:", err));
+  }, "image/png");
 }
 
 // ─── Canvas side helpers ──────────────────────────────────────────────────────
@@ -326,8 +337,13 @@ function handleTrackerPoint(point, playerOverride) {
     return;
   }
 
-  // Drawable: refresh the dropout timer and extend (or start) the stroke.
-  trackerLastActiveAt[player] = performance.now();
+  // If this player was untracked longer than DROPOUT_MS, break the stroke so
+  // the next sighting starts a new line instead of connecting across the gap.
+  const now = performance.now();
+  if (trackerStroke[player] && now - trackerLastActiveAt[player] > DROPOUT_MS) {
+    trackerStroke[player] = null;
+  }
+  trackerLastActiveAt[player] = now;
 
   const pt          = vec2(rawGx, gy);
   const strokeColor = player === 1 ? [231,76,60] : [52,152,219];
@@ -516,11 +532,15 @@ function restartGame() {
 }
 
 document.addEventListener("keydown", (e) => {
-  if (e.code === "Space" && gameEnded) {
+  if (e.code === "Space") {
     e.preventDefault();
     restartGame();
   }
 });
 
 // ─── Kick off ────────────────────────────────────────────────────────────────
-runPromptSelect();
+fetch("../prompts.json")
+  .then((r) => r.json())
+  .then((data) => { PROMPTS = data; })
+  .catch((err) => { console.error("Failed to load prompts.json:", err); })
+  .finally(() => { runPromptSelect(); });
