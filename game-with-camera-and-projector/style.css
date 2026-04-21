@@ -16,7 +16,7 @@ img {
 body {
   background: #fff;
   color: #000;
-  font-family: 'imaginaryfriend-bb', sans-serif;
+  font-family: "imaginaryfriend-bb", sans-serif;
   height: 100vh;
   display: flex;
   flex-direction: column;
@@ -29,7 +29,7 @@ body {
 
 /* ---- Timer ---- */
 .timer-display {
-  font-family: 'imaginaryfriend-bb', sans-serif;
+  font-family: "imaginaryfriend-bb", sans-serif;
   font-size: clamp(1.8rem, 5vh, 4rem);
   font-weight: 900;
   color: #000;
@@ -159,7 +159,7 @@ body {
   max-width: 90vw;
 }
 .prompt-title {
-  font-family: "Bangers", "Impact", sans-serif;
+  font-family: "imaginaryfriend-bb", sans-serif;
   font-size: 3.5rem;
   color: #000;
   letter-spacing: 0.1em;
@@ -183,7 +183,7 @@ body {
   height: 96px;
   line-height: 96px;
   text-align: center;
-  font-family: "Bangers", "Impact", sans-serif;
+  font-family: "imaginaryfriend-bb", sans-serif;
   font-size: 3rem;
   color: #000;
   text-transform: uppercase;
@@ -274,7 +274,7 @@ body {
   animation: plaqueSlide 0.6s 0.3s ease backwards;
 }
 .caption-text {
-  font-family: "Special Elite", "Courier New", monospace;
+  font-family: "imaginaryfriend-bb", sans-serif;
   font-size: 2rem;
   color: #1a0f00;
   letter-spacing: 0.04em;
