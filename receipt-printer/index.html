@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Comically Large Receipt Printer</title>
+  <link rel="stylesheet" href="https://use.typekit.net/loy8wwx.css">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="rp-header">
+    <h1>RECEIPT PRINTER</h1>
+    <p class="subtitle">Pick a drawing. Print a tiny masterpiece.</p>
+  </header>
+
+  <main class="rp-main">
+    <section class="picker">
+      <h2>Drawings</h2>
+      <div id="grid" class="grid" aria-live="polite"></div>
+      <div id="status" class="status">Loading drawings&hellip;</div>
+    </section>
+
+    <section class="composer">
+      <div class="preview-wrap">
+        <h2>Preview (1-bit, 384px)</h2>
+        <canvas id="templateCanvas" width="384" height="504" hidden></canvas>
+        <canvas id="previewCanvas" width="384" height="504" class="preview-canvas"></canvas>
+      </div>
+
+      <div class="output">
+        <h2>ESC/POS hex</h2>
+        <div class="controls">
+          <label><input type="checkbox" id="ditherToggle"> Floyd-Steinberg dither</label>
+          <button id="copyBtn" type="button" disabled>Copy hex</button>
+          <span id="byteCount" class="byte-count"></span>
+        </div>
+        <textarea id="hexOut" class="hex" spellcheck="false" readonly placeholder="Pick a drawing to generate GS v 0 raster bytes&hellip;"></textarea>
+        <p class="hint">
+          Paste into <code>xxd -r -p | lp -o raw -d &lt;printer&gt;</code> or a thermal-printer tool.
+          Starts with <code>1D 76 30 00</code> (GS v 0).
+        </p>
+      </div>
+    </section>
+  </main>
+
+  <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
+  <script src="../env/config.js"></script>
+  <script src="../env/supabase-client.js"></script>
+  <script src="receipt-printer.js"></script>
+</body>
+</html>
