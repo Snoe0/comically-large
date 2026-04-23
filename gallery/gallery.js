@@ -20,11 +20,12 @@ const trackEl  = document.getElementById("galleryTrack");
 const statusEl = document.getElementById("galleryStatus");
 const countEl  = document.getElementById("galleryCount");
 
-let drawings   = [];  // [{path, url, caption, prompt, createdAt}]
-let paused     = false;
-let lastTick   = null;
-let offset     = 0;
-let trackWidth = 0;
+let drawings     = [];  // [{path, url, caption, prompt, createdAt}]
+let paused       = false;
+let lastTick     = null;
+let offset       = 0;   // current translateX magnitude (track moves left by this much)
+let appendCursor = 0;   // next drawings[] index to drop onto the right of the track
+let slideIndex   = 0;   // monotonic counter for frame selection, so adjacent slides differ
 
 function setStatus(text) {
   if (!text) {
@@ -80,24 +81,30 @@ function buildSlide(item, index) {
   return slide;
 }
 
+function currentGap() {
+  const cs = getComputedStyle(trackEl);
+  return parseFloat(cs.columnGap || cs.gap) || 0;
+}
+
+function appendNext() {
+  if (drawings.length === 0) return;
+  const item = drawings[appendCursor % drawings.length];
+  trackEl.appendChild(buildSlide(item, slideIndex));
+  appendCursor++;
+  slideIndex++;
+}
+
 function renderTrack() {
   trackEl.innerHTML = "";
+  appendCursor = 0;
+  slideIndex = 0;
+  offset = 0;
+  trackEl.style.transform = "translateX(0px)";
   if (drawings.length === 0) return;
 
-  // Duplicate the list so the track can loop seamlessly when it wraps.
-  const doubled = drawings.concat(drawings);
-  for (let i = 0; i < doubled.length; i++) {
-    trackEl.appendChild(buildSlide(doubled[i], i));
-  }
-
-  // Wait a tick for layout, then measure one copy's width to know when to wrap.
-  requestAnimationFrame(() => {
-    // The first half is one full pass; its width is what we loop on.
-    const totalWidth = trackEl.scrollWidth;
-    trackWidth = totalWidth / 2;
-    offset = 0;
-    trackEl.style.transform = "translateX(0px)";
-  });
+  // Just drop one slide in as a seed; step() will fill the viewport on the
+  // first frame once layout has resolved.
+  appendNext();
 }
 
 function step(now) {
@@ -105,9 +112,31 @@ function step(now) {
   const dt = (now - lastTick) / 1000;
   lastTick = now;
 
-  if (!paused && trackWidth > 0) {
+  if (!paused && trackEl.children.length > 0) {
     offset += SCROLL_SPEED * dt;
-    if (offset >= trackWidth) offset -= trackWidth;
+
+    // Drop slides that have fully scrolled past the left edge. Each removal
+    // shifts the remaining slides left in layout space by their width + gap,
+    // so we subtract the same amount from offset to hold the visuals still.
+    const gap = currentGap();
+    let first = trackEl.firstElementChild;
+    while (first && first.offsetLeft + first.offsetWidth - offset < -10) {
+      const shrink = first.offsetWidth + gap;
+      trackEl.removeChild(first);
+      offset -= shrink;
+      first = trackEl.firstElementChild;
+    }
+
+    // Keep adding slides until the rightmost one sits beyond the viewport
+    // plus a small buffer, so new content is ready before it's needed.
+    const viewportWidth = trackEl.parentElement.clientWidth;
+    let last = trackEl.lastElementChild;
+    let safety = 0;
+    while (last && last.offsetLeft + last.offsetWidth - offset < viewportWidth + 200 && safety++ < 50) {
+      appendNext();
+      last = trackEl.lastElementChild;
+    }
+
     trackEl.style.transform = `translateX(${-offset}px)`;
   }
   requestAnimationFrame(step);
@@ -122,16 +151,18 @@ async function loadDrawings() {
 
   try {
     const items = await api.listDrawings({ limit: 200 });
+    const hadSlides = trackEl.children.length > 0;
     drawings = items;
     countEl.textContent = `${items.length} drawing${items.length === 1 ? "" : "s"}`;
     if (items.length === 0) {
       setStatus("No drawings yet. Finish a round of the game to fill this wall.");
       trackEl.innerHTML = "";
-      trackWidth = 0;
       return;
     }
     setStatus("");
-    renderTrack();
+    // On refresh, don't wipe the track — slides already on screen keep
+    // scrolling, and newly appended ones will pull from the updated list.
+    if (!hadSlides) renderTrack();
   } catch (err) {
     console.error("[gallery] loadDrawings failed:", err);
     setStatus("Couldn't reach Supabase. Check env/config.js and bucket permissions.");

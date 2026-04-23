@@ -9,7 +9,7 @@ html, body {
 }
 
 body {
-  background: radial-gradient(circle at 50% 20%, #fdf6e3 0%, #e8dcc0 80%);
+  background: #ffffff;
   color: #1a0f00;
   font-family: "imaginaryfriend-bb", sans-serif;
   display: flex;
@@ -18,24 +18,40 @@ body {
   min-height: 100vh;
 }
 
-/* ---- Header ---- */
-.gallery-header {
-  padding: clamp(18px, 3vh, 36px) clamp(16px, 3vw, 48px) 0;
-  text-align: center;
-  flex-shrink: 0;
+/* ---- Corner decorations ---- */
+.corner-logo {
+  position: absolute;
+  top: clamp(12px, 2vh, 28px);
+  left: clamp(16px, 2vw, 48px);
+  width: clamp(180px, 20vw, 320px);
+  z-index: 10;
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
 }
-.gallery-header h1 {
-  font-family: "imaginaryfriend-bb", sans-serif;
-  font-size: clamp(2rem, 5vw, 4rem);
-  letter-spacing: 0.08em;
-  color: #000;
-  text-shadow: 4px 4px 0 #ddd;
+.corner-logo .logo-bubble {
+  width: 62%;
+  height: auto;
+  display: block;
 }
-.gallery-header .subtitle {
-  font-family: "imaginaryfriend-bb", sans-serif;
-  font-size: clamp(0.9rem, 1.3vw, 1.2rem);
-  margin-top: 0.4rem;
-  color: #4a3010;
+.corner-logo .logo-wordmark {
+  /* Tuck the wordmark up into the bubble's empty lower area so the tail
+     points down into the "GALLERY" text (matches the reference logo). */
+  width: 100%;
+  height: auto;
+  display: block;
+  margin-top: -22%;
+}
+
+.corner-mic {
+  position: absolute;
+  top: clamp(-24px, -1vh, -4px);
+  right: clamp(-28px, -1vw, -6px);
+  width: clamp(288px, 33.6vw, 528px);
+  height: auto;
+  z-index: 0;
+  pointer-events: none;
 }
 
 /* ---- Scrolling stage ---- */
@@ -43,9 +59,11 @@ body {
   flex: 1;
   min-height: 0;
   position: relative;
+  z-index: 1;
   overflow: hidden;
   display: flex;
   align-items: center;
+  padding-top: clamp(120px, 22vh, 280px);
 }
 
 .gallery-track {
@@ -67,7 +85,7 @@ body {
 
 .frame-wrap {
   position: relative;
-  height: clamp(320px, 58vh, 640px);
+  height: clamp(260px, 48vh, 520px);
   aspect-ratio: 4 / 3;
   animation: framePop 0.7s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
 }
@@ -93,27 +111,27 @@ body {
 
 .plaque {
   background: linear-gradient(#d9b382, #b5895a);
-  border: 4px solid #000;
-  border-radius: 8px;
-  padding: 0.7rem 1.8rem;
-  min-width: 18vw;
-  max-width: 80vw;
+  border: 3px solid #000;
+  border-radius: 7px;
+  padding: 0.55rem 1.4rem;
+  min-width: 14vw;
+  max-width: 72vw;
   text-align: center;
-  box-shadow: 6px 6px 0 #000;
+  box-shadow: 5px 5px 0 #000;
 }
 .plaque .caption-text {
   font-family: "imaginaryfriend-bb", sans-serif;
-  font-size: clamp(0.95rem, 1.6vw, 1.6rem);
+  font-size: clamp(0.8rem, 1.3vw, 1.35rem);
   color: #1a0f00;
   letter-spacing: 0.04em;
 }
 .plaque .prompt-text {
   display: block;
   font-family: "imaginaryfriend-bb", sans-serif;
-  font-size: clamp(0.75rem, 1.1vw, 1rem);
+  font-size: clamp(0.65rem, 0.9vw, 0.9rem);
   color: #3b240a;
   letter-spacing: 0.08em;
-  margin-top: 0.25rem;
+  margin-top: 0.2rem;
   opacity: 0.85;
 }
 

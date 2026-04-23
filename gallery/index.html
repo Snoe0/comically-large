@@ -8,10 +8,11 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <header class="gallery-header">
-    <h1>THE COMICALLY LARGE GALLERY</h1>
-    <p class="subtitle">A scrolling wall of timed masterpieces.</p>
-  </header>
+  <div class="corner-logo" aria-hidden="true">
+    <img class="logo-bubble" src="../assets/Artboard 2 3.png" alt="">
+    <img class="logo-wordmark" src="../assets/GALLERY.png" alt="">
+  </div>
+  <img class="corner-mic" src="../assets/micassetsAsset 6 1.png" alt="" aria-hidden="true">
 
   <main class="gallery-stage">
     <div id="galleryTrack" class="gallery-track" aria-live="polite"></div>
@@ -23,8 +24,6 @@
 
   <footer class="gallery-footer">
     <span id="galleryCount">0 drawings</span>
-    <span class="sep">&bull;</span>
-    <span>Press <kbd>Space</kbd> to pause scrolling</span>
   </footer>
 
   <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
