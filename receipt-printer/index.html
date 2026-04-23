@@ -3,14 +3,14 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Comically Large Receipt Printer</title>
+  <title>Comically Large Mail-a-Masterpiece</title>
   <link rel="stylesheet" href="https://use.typekit.net/loy8wwx.css">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <header class="rp-header">
-    <h1>RECEIPT PRINTER</h1>
-    <p class="subtitle">Pick a drawing. Print a tiny masterpiece.</p>
+    <h1>MAIL-A-MASTERPIECE</h1>
+    <p class="subtitle">Pick a drawing. Mail a tiny masterpiece.</p>
   </header>
 
   <main class="rp-main">
@@ -22,22 +22,41 @@
 
     <section class="composer">
       <div class="preview-wrap">
-        <h2>Preview (1-bit, 384px)</h2>
-        <canvas id="templateCanvas" width="384" height="504" hidden></canvas>
-        <canvas id="previewCanvas" width="384" height="504" class="preview-canvas"></canvas>
+        <h2>Preview (1-bit, 25:57)</h2>
+        <canvas id="templateCanvas" width="600" height="1368" hidden></canvas>
+        <canvas id="previewCanvas" width="600" height="1368" class="preview-canvas"></canvas>
       </div>
 
       <div class="output">
-        <h2>ESC/POS hex</h2>
+        <h2>Email</h2>
         <div class="controls">
           <label><input type="checkbox" id="ditherToggle"> Floyd-Steinberg dither</label>
-          <button id="copyBtn" type="button" disabled>Copy hex</button>
           <span id="byteCount" class="byte-count"></span>
         </div>
-        <textarea id="hexOut" class="hex" spellcheck="false" readonly placeholder="Pick a drawing to generate GS v 0 raster bytes&hellip;"></textarea>
+
+        <label class="field">
+          <span>To</span>
+          <input id="toInput" type="email" placeholder="recipient@example.com" autocomplete="email">
+        </label>
+        <label class="field">
+          <span>Subject</span>
+          <input id="subjectInput" type="text" value="A masterpiece, unsigned.">
+        </label>
+        <label class="field">
+          <span>Message</span>
+          <textarea id="bodyInput" rows="4">Behold: one comically large masterpiece, courtesy of the internet. (PNG attached / paste with Ctrl+V.)</textarea>
+        </label>
+
+        <div class="controls">
+          <button id="emailBtn" type="button" disabled>Open in Gmail</button>
+          <button id="downloadBtn" type="button" disabled>Download PNG</button>
+          <span id="emailStatus" class="byte-count"></span>
+        </div>
+
         <p class="hint">
-          Paste into <code>xxd -r -p | lp -o raw -d &lt;printer&gt;</code> or a thermal-printer tool.
-          Starts with <code>1D 76 30 00</code> (GS v 0).
+          Clicking <code>Open in Gmail</code> copies the PNG to your clipboard and opens a pre-filled
+          Gmail compose tab — paste the image into the body with <code>Ctrl+V</code>, or drop the
+          downloaded file in as an attachment.
         </p>
       </div>
     </section>

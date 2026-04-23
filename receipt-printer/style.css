@@ -111,9 +111,10 @@ section h2 {
   gap: 12px;
 }
 .preview-canvas {
-  width: 384px;
+  width: 320px;
   max-width: 100%;
   height: auto;
+  aspect-ratio: 25 / 57;
   background: #fff;
   border: 2px solid #000;
   box-shadow: 6px 6px 0 #000;
@@ -170,20 +171,36 @@ section h2 {
   color: #4a3010;
 }
 
-.hex {
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
   font-family: "imaginaryfriend-bb", sans-serif;
-  font-size: 11px;
-  line-height: 1.35;
-  height: 260px;
-  width: 100%;
-  padding: 10px;
+  color: #1a0f00;
+}
+.field > span {
+  font-size: 0.95rem;
+  letter-spacing: 0.06em;
+}
+.field input,
+.field textarea {
+  font-family: "imaginaryfriend-bb", sans-serif;
+  font-size: 1rem;
+  padding: 8px 10px;
   background: #fff;
   color: #1a0f00;
   border: 2px solid #000;
   box-shadow: 4px 4px 0 #000;
+  width: 100%;
+}
+.field textarea {
   resize: vertical;
-  white-space: pre-wrap;
-  word-break: break-all;
+  line-height: 1.35;
+}
+.field input:focus,
+.field textarea:focus {
+  outline: 3px solid #e94560;
+  outline-offset: 1px;
 }
 
 .hint {

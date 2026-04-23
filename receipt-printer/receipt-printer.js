@@ -1,43 +1,52 @@
-// Comically Large Receipt Printer — pick a drawing from Supabase, render a
-// 384px-wide black-and-white receipt-print template, and emit the ESC/POS
-// GS v 0 raster command as a copyable hex string.
+// Comically Large Mail-a-Masterpiece — pick a drawing from Supabase, render a
+// 384px-wide black-and-white receipt-style template, and ship it as a PNG via
+// a pre-filled Gmail compose tab (with clipboard copy + file download).
 
 // ---------- Layout constants ----------
-const CANVAS_W      = 384;        // thermal printer width in pixels
-const CANVAS_H      = 504;        // multiple of 8 (500 rounded up)
-const BYTES_PER_ROW = CANVAS_W / 8;  // 48
+// 25:57 portrait canvas (base 200×456, multiples of 8). SCALE oversamples
+// so the 1-bit threshold has antialiased source pixels to bite into.
+const SCALE         = 3;
+const CANVAS_W      = 200 * SCALE;   // 600 — width / 8 = 75 bytes/row
+const CANVAS_H      = 456 * SCALE;   // 1368
+const BYTES_PER_ROW = CANVAS_W / 8;
 
-const TOP_BAND_H    = 90;
-const BOX_TOP       = 110;
-const BOX_BOTTOM    = 370;
-const BOX_LEFT      = 8;
-const BOX_RIGHT     = 376;
-const BOX_PAD       = 4;
-const CAPTION_TOP   = 380;
+// Stacked layout: top band | drawing box | caption band.
+const TOP_BAND_H  = 84  * SCALE;
+const BOX_TOP     = 96  * SCALE;
+const BOX_BOTTOM  = 332 * SCALE;
+const BOX_LEFT    = 4   * SCALE;
+const BOX_RIGHT   = 196 * SCALE;
+const BOX_PAD     = 4   * SCALE;
+const CAPTION_TOP = 340 * SCALE;
 
 const FALLBACK_CAPTION = "A MASTERPIECE, UNSIGNED.";
 
 const SPEECH_BUBBLE_SRC = "../assets/speech-bubble.png";
-const SPEECH_BUBBLE_MAX_W = 130;
-const SPEECH_BUBBLE_MAX_H = 96;
-const SPEECH_BUBBLE_RIGHT = 378;
-const SPEECH_BUBBLE_TOP   = 4;
+const SPEECH_BUBBLE_MAX_W = 78  * SCALE;
+const SPEECH_BUBBLE_MAX_H = 72  * SCALE;
+const SPEECH_BUBBLE_RIGHT = 196 * SCALE;
+const SPEECH_BUBBLE_TOP   = 6   * SCALE;
 let speechBubbleImg = null;
 
 // ---------- DOM handles ----------
-const gridEl        = document.getElementById("grid");
-const statusEl      = document.getElementById("status");
+const gridEl         = document.getElementById("grid");
+const statusEl       = document.getElementById("status");
 const templateCanvas = document.getElementById("templateCanvas");
 const previewCanvas  = document.getElementById("previewCanvas");
-const ditherToggle  = document.getElementById("ditherToggle");
-const copyBtn       = document.getElementById("copyBtn");
-const hexOut        = document.getElementById("hexOut");
-const byteCountEl   = document.getElementById("byteCount");
+const ditherToggle   = document.getElementById("ditherToggle");
+const emailBtn       = document.getElementById("emailBtn");
+const downloadBtn    = document.getElementById("downloadBtn");
+const toInput        = document.getElementById("toInput");
+const subjectInput   = document.getElementById("subjectInput");
+const bodyInput      = document.getElementById("bodyInput");
+const byteCountEl    = document.getElementById("byteCount");
+const emailStatusEl  = document.getElementById("emailStatus");
 
 // ---------- State ----------
 let drawings     = [];
 let currentItem  = null;
 let currentIndex = -1;
+let currentPngBlob = null;
 
 // ---------- Status ----------
 function setStatus(text) {
@@ -48,6 +57,10 @@ function setStatus(text) {
   }
   statusEl.classList.remove("hidden");
   statusEl.textContent = text;
+}
+
+function setEmailStatus(text) {
+  emailStatusEl.textContent = text || "";
 }
 
 // ---------- Fetch ----------
@@ -69,7 +82,7 @@ async function loadDrawings() {
     setStatus("");
     renderGrid();
   } catch (err) {
-    console.error("[receipt-printer] loadDrawings failed:", err);
+    console.error("[mail-a-masterpiece] loadDrawings failed:", err);
     setStatus("Couldn't reach Supabase. Check env/config.js and bucket permissions.");
   }
 }
@@ -103,10 +116,15 @@ async function selectDrawing(item, index) {
 
   try {
     await renderTemplate(item, index);
-    updateOutput();
-    copyBtn.disabled = false;
+    await updateOutput();
+    emailBtn.disabled = false;
+    downloadBtn.disabled = false;
+
+    // Seed subject from caption so the email matches the drawing.
+    const caption = (item.caption || FALLBACK_CAPTION).toString();
+    subjectInput.value = caption.charAt(0).toUpperCase() + caption.slice(1).toLowerCase();
   } catch (err) {
-    console.error("[receipt-printer] renderTemplate failed:", err);
+    console.error("[mail-a-masterpiece] renderTemplate failed:", err);
     setStatus("Couldn't load that drawing. Try another.");
   }
 }
@@ -114,7 +132,10 @@ async function selectDrawing(item, index) {
 // ---------- Template composition ----------
 async function renderTemplate(item, index) {
   const ctx = templateCanvas.getContext("2d");
-  ctx.imageSmoothingEnabled = false;
+  // Smooth scaling gives the 1-bit threshold a higher-fidelity source
+  // (esp. for the speech-bubble raster), which reads as "less pixelated".
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
 
   // Background
   ctx.fillStyle = "#fff";
@@ -125,14 +146,14 @@ async function renderTemplate(item, index) {
   ctx.fillStyle = "#000";
   ctx.textAlign = "left";
   ctx.textBaseline = "alphabetic";
-  ctx.font = 'bold 36px "imaginaryfriend-bb", sans-serif';
-  ctx.fillText(label, 10, 58);
+  ctx.font = `bold ${22 * SCALE}px "imaginaryfriend-bb", sans-serif`;
+  ctx.fillText(label, 8 * SCALE, 44 * SCALE);
 
   drawSpeechBubble(ctx);
 
   // Drawing box
   ctx.strokeStyle = "#000";
-  ctx.lineWidth = 2;
+  ctx.lineWidth = 2 * SCALE;
   ctx.strokeRect(BOX_LEFT, BOX_TOP, BOX_RIGHT - BOX_LEFT, BOX_BOTTOM - BOX_TOP);
 
   // Load and draw the selected image, letterboxed inside the box.
@@ -160,13 +181,13 @@ async function renderTemplate(item, index) {
   ctx.fillStyle = "#000";
   ctx.textAlign = "center";
   ctx.textBaseline = "alphabetic";
-  ctx.font = 'bold 26px "imaginaryfriend-bb", sans-serif';
+  ctx.font = `bold ${16 * SCALE}px "imaginaryfriend-bb", sans-serif`;
 
-  const lines = wrapText(ctx, captionRaw, CANVAS_W - 16, 2);
-  const lineH = 32;
+  const lines = wrapText(ctx, captionRaw, CANVAS_W - 16 * SCALE, 3);
+  const lineH = 20 * SCALE;
   const blockH = lines.length * lineH;
   const bandH = CANVAS_H - CAPTION_TOP;
-  const firstBaseline = CAPTION_TOP + Math.floor((bandH - blockH) / 2) + 24;
+  const firstBaseline = CAPTION_TOP + Math.floor((bandH - blockH) / 2) + 16 * SCALE;
   lines.forEach((line, i) => {
     ctx.fillText(line, CANVAS_W / 2, firstBaseline + i * lineH);
   });
@@ -267,25 +288,6 @@ function canvasToMonochrome(canvas, { dither }) {
   return { bits, width: W, height: H };
 }
 
-// ---------- ESC/POS hex ----------
-function monochromeToEscPosHex(bits, width, height) {
-  const xBytes = width / 8;           // 48
-  const xL = xBytes & 0xff;
-  const xH = (xBytes >> 8) & 0xff;
-  const yL = height & 0xff;
-  const yH = (height >> 8) & 0xff;
-  const header = [0x1D, 0x76, 0x30, 0x00, xL, xH, yL, yH];
-
-  const hexParts = new Array(header.length + bits.length);
-  for (let i = 0; i < header.length; i++) {
-    hexParts[i] = header[i].toString(16).toUpperCase().padStart(2, "0");
-  }
-  for (let i = 0; i < bits.length; i++) {
-    hexParts[header.length + i] = bits[i].toString(16).toUpperCase().padStart(2, "0");
-  }
-  return hexParts.join(" ");
-}
-
 // ---------- Preview ----------
 function renderMonoPreview(bits, W, H) {
   previewCanvas.width = W;
@@ -306,35 +308,93 @@ function renderMonoPreview(bits, W, H) {
   ctx.putImageData(id, 0, 0);
 }
 
+function previewToPngBlob() {
+  return new Promise((resolve, reject) => {
+    previewCanvas.toBlob((blob) => {
+      if (blob) resolve(blob);
+      else reject(new Error("Canvas toBlob returned null"));
+    }, "image/png");
+  });
+}
+
 // ---------- Wire-up ----------
-function updateOutput() {
+async function updateOutput() {
   if (!currentItem) return;
   const { bits, width, height } = canvasToMonochrome(templateCanvas, { dither: ditherToggle.checked });
   renderMonoPreview(bits, width, height);
-  hexOut.value = monochromeToEscPosHex(bits, width, height);
-  const totalBytes = 8 + bits.length;
-  byteCountEl.textContent = `${totalBytes.toLocaleString()} bytes (${width}×${height})`;
+  currentPngBlob = await previewToPngBlob();
+  byteCountEl.textContent = `${currentPngBlob.size.toLocaleString()} bytes (${width}×${height} PNG)`;
+  setEmailStatus("");
+}
+
+function pngFilename() {
+  const base = currentIndex >= 0 ? `comically-large-${String(currentIndex + 1).padStart(4, "0")}` : "comically-large";
+  return `${base}.png`;
+}
+
+function triggerDownload(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  // Revoke on the next tick so the download has time to start.
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+async function copyImageToClipboard(blob) {
+  if (!navigator.clipboard || typeof ClipboardItem === "undefined") return false;
+  try {
+    await navigator.clipboard.write([new ClipboardItem({ [blob.type]: blob })]);
+    return true;
+  } catch (err) {
+    console.warn("[mail-a-masterpiece] clipboard image write failed:", err);
+    return false;
+  }
+}
+
+function openGmailCompose({ to, subject, body }) {
+  const params = new URLSearchParams({ view: "cm", fs: "1" });
+  if (to)      params.set("to", to);
+  if (subject) params.set("su", subject);
+  if (body)    params.set("body", body);
+  const url = `https://mail.google.com/mail/?${params.toString()}`;
+  window.open(url, "_blank", "noopener");
 }
 
 ditherToggle.addEventListener("change", () => {
   if (currentItem) updateOutput();
 });
 
-copyBtn.addEventListener("click", async () => {
-  if (!hexOut.value) return;
-  try {
-    await navigator.clipboard.writeText(hexOut.value);
-    const original = copyBtn.textContent;
-    copyBtn.textContent = "Copied!";
-    setTimeout(() => { copyBtn.textContent = original; }, 1200);
-  } catch (err) {
-    console.warn("[receipt-printer] clipboard write failed, selecting text instead:", err);
-    hexOut.focus();
-    hexOut.select();
-  }
+downloadBtn.addEventListener("click", () => {
+  if (!currentPngBlob) return;
+  triggerDownload(currentPngBlob, pngFilename());
+});
+
+emailBtn.addEventListener("click", async () => {
+  if (!currentPngBlob) return;
+
+  const copied = await copyImageToClipboard(currentPngBlob);
+  triggerDownload(currentPngBlob, pngFilename());
+
+  openGmailCompose({
+    to: toInput.value.trim(),
+    subject: subjectInput.value.trim() || "A masterpiece, unsigned.",
+    body: bodyInput.value,
+  });
+
+  setEmailStatus(copied
+    ? "Image copied — paste with Ctrl+V in Gmail."
+    : "PNG downloaded — drop it into Gmail as an attachment.");
 });
 
 (async function init() {
+  // Size the offscreen template canvas to the oversampled render grid.
+  templateCanvas.width = CANVAS_W;
+  templateCanvas.height = CANVAS_H;
+
   // Wait for imaginaryfriend-bb to load so canvas text renders in the right face.
   if (document.fonts && document.fonts.ready) {
     try { await document.fonts.ready; } catch (_) { /* non-fatal */ }
@@ -346,7 +406,7 @@ copyBtn.addEventListener("click", async () => {
     await img.decode();
     speechBubbleImg = img;
   } catch (err) {
-    console.warn("[receipt-printer] speech bubble asset failed to load:", err);
+    console.warn("[mail-a-masterpiece] speech bubble asset failed to load:", err);
   }
   await loadDrawings();
 })();
