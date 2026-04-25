@@ -11,9 +11,6 @@
   <!-- Background image -->
   <img src="images/ComicallyLargeBackground.png" alt="blue and red halftone dot design" width="500" height="600">
 
-  <!-- Top-left prompt label (shown during play) -->
-  <div id="promptLabel" class="prompt-label"></div>
-
   <!-- Prompt select overlay -->
   <div id="promptOverlay" class="prompt-overlay">
     <div class="comic-panel">
@@ -25,8 +22,14 @@
     </div>
   </div>
 
+  <!-- Pencils-ready intro overlay (shown 1.5s before countdown) -->
+  <div id="readyOverlay" class="ready-overlay hidden">
+    <img src="../assets/Main - Prompt.png" alt="Players, get your pencils ready!" />
+  </div>
+
   <!-- Countdown video overlay -->
   <div id="countdownOverlay" class="countdown-overlay hidden">
+    <div class="stand-label stand-label-center">1P</div>
     <video id="countdownVideo" src="../assets/comic-countdown.mp4" playsinline preload="auto" muted></video>
   </div>
 

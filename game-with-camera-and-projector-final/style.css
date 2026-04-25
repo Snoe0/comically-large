@@ -173,38 +173,73 @@ body.display { background: #000; }
 body.display > img { display: none; }
 body.display[data-phase="play"] { background: #fff; }
 
-/* During play: prompt sits BIG in the centre, not as a small top-left chip. */
-body.display[data-phase="play"] .prompt-label {
-  top: 50%;
-  left: 50%;
-  right: auto;
-  transform: translate(-50%, -50%) rotate(-1.2deg);
-  font-size: clamp(2.5rem, 7vw, 6rem);
-  letter-spacing: 0.04em;
-  line-height: 1.1;
-  max-width: min(80vw, 1100px);
-  padding: 0.6em 0.9em;
-  text-align: center;
-  border-width: 8px;
-  box-shadow: 12px 12px 0 #000;
-  background: #fff;
+/* The play-stage hosts a fullscreen promptpage.png. Prompt text and timer
+   are absolutely positioned over the artwork. Hidden outside play phase. */
+body.display .play-stage { display: none; }
+body.display[data-phase="play"] .play-stage {
+  display: block;
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+}
+body.display .play-stage .timer-display { margin-top: 0; }
+
+/* Fullscreen the promptpage artwork. Stretched to fully cover the viewport. */
+.play-stage-page {
+  position: absolute;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  background-image: url("../assets/promptpage.png");
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 100% 100%;
 }
 
-/* Mic only shows during the drawing phase. */
-.display-mic {
-  position: fixed;
-  display: none;
+/* Prompt text — sits inside the trapezoidal box region of promptpage.png and
+   wraps onto multiple lines for long prompts. */
+body.display[data-phase="play"] .play-stage-page .prompt-label {
+  position: absolute;
+  /* Box region as % of the artwork, which now fills the viewport. */
+  left: 19%;
+  top: 22%;
+  width: 48%;
+  height: 42%;
+  transform: none;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  padding: 0 1.5%;
+  margin: 0;
+  max-width: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #000;
+  text-align: center;
+  font-family: "imaginaryfriend-bb", sans-serif;
+  font-size: clamp(1.4rem, 4.4vw, 5rem);
+  line-height: 1.05;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: normal;
+  overflow-wrap: break-word;
+  word-break: normal;
+  hyphens: auto;
+  opacity: 1;
   pointer-events: none;
-  z-index: 60;
-  bottom: auto;
-  left: auto;
-  top: clamp(12px, 3vh, 40px);
-  right: clamp(12px, 3vw, 40px);
-  width: clamp(180px, 26vw, 360px);
-  height: auto;
-  object-fit: contain;
 }
-body.display[data-phase="play"] .display-mic { display: block; }
+
+/* Timer overlays the image, sitting below the prompt box and roughly
+   horizontally centred under it. */
+body.display[data-phase="play"] .play-stage-page .timer-display {
+  position: absolute;
+  /* Box bottom is ~70%; place timer just below it, centred under the box. */
+  top: 74%;
+  left: 43%;
+  transform: translateX(-50%);
+  z-index: 1;
+}
 
 /* ---- Comic Prompt Overlay ---- */
 .prompt-overlay {
@@ -280,6 +315,22 @@ body.display[data-phase="play"] .display-mic { display: block; }
   border-bottom: 3px dashed #000;
 }
 
+/* ---- Pencils-ready intro overlay ---- */
+.ready-overlay {
+  position: fixed;
+  inset: 0;
+  background: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1250;
+}
+.ready-overlay img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
 /* ---- Countdown video overlay ---- */
 .countdown-overlay {
   position: fixed;
@@ -294,13 +345,35 @@ body.display[data-phase="play"] .display-mic { display: block; }
   width: 100%;
   height: 100%;
   object-fit: contain;
+  position: relative;
+  z-index: 1;
 }
+.stand-label {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  font-family: "imaginaryfriend-bb", sans-serif;
+  font-weight: 900;
+  font-size: clamp(8rem, 28vh, 22rem);
+  color: #fff;
+  opacity: 0.18;
+  letter-spacing: 0.05em;
+  pointer-events: none;
+  user-select: none;
+  z-index: 0;
+}
+.stand-label-center {
+  left: 50%;
+  transform: translate(-50%, -50%);
+}
+.stand-label-left  { left: 12%;  transform: translate(-50%, -50%); }
+.stand-label-right { left: 88%;  transform: translate(-50%, -50%); }
 
 /* ---- Final framed caption overlay ---- */
 .caption-overlay {
   position: fixed;
   inset: 0;
-  background: radial-gradient(circle at 50% 30%, #fdf6e3 0%, #e8dcc0 80%);
+  background: #fff;
   display: flex;
   flex-direction: column;
   align-items: center;

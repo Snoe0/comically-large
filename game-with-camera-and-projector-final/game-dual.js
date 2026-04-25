@@ -92,7 +92,23 @@ function runPromptSelect() {
 function startCountdownAfterPrompt(myRound) {
   const promptOverlay    = document.getElementById("promptOverlay");
   const countdownOverlay = document.getElementById("countdownOverlay");
+  const readyOverlay     = document.getElementById("readyOverlay");
   const video            = document.getElementById("countdownVideo");
+
+  // Show "Players, get your pencils ready!" for 2.5s before the countdown.
+  if (readyOverlay) {
+    promptOverlay.style.display = "none";
+    readyOverlay.classList.remove("hidden");
+    setTimeout(() => {
+      if (myRound !== roundId) return;
+      readyOverlay.classList.add("hidden");
+      beginCountdown();
+    }, 2500);
+  } else {
+    beginCountdown();
+  }
+
+  function beginCountdown() {
 
   let finished = false;
   const finish = () => {
@@ -137,6 +153,7 @@ function startCountdownAfterPrompt(myRound) {
     video.addEventListener("canplay", onReady);
     setTimeout(onReady, 5000);
     try { video.load(); } catch (_) {}
+  }
   }
 }
 
@@ -281,21 +298,26 @@ function showFramedResult() {
     for (const stroke of playerState[p].strokes) stroke.color = [0, 0, 0];
   }
 
-  const srcCanvas = document.getElementById("gameCanvas");
-  finalCanvas.width  = srcCanvas.width;
-  finalCanvas.height = srcCanvas.height;
-  const ctx = finalCanvas.getContext("2d");
-  ctx.fillStyle = "#fff";
-  ctx.fillRect(0, 0, finalCanvas.width, finalCanvas.height);
-  try {
-    ctx.drawImage(srcCanvas, 0, 0, finalCanvas.width, finalCanvas.height);
-  } catch (_) {}
-
   captionText.textContent = chosenPrompt?.caption || "";
-  captionOverlay.classList.remove("hidden");
 
-  // Push the final drawing to the gallery. Non-blocking; failures are logged.
-  uploadFinalDrawing(finalCanvas, chosenPrompt);
+  // Wait one frame so kaplay re-renders the strokes in black before we
+  // snapshot the canvas into the framed result.
+  requestAnimationFrame(() => {
+    const srcCanvas = document.getElementById("gameCanvas");
+    finalCanvas.width  = srcCanvas.width;
+    finalCanvas.height = srcCanvas.height;
+    const ctx = finalCanvas.getContext("2d");
+    ctx.fillStyle = "#fff";
+    ctx.fillRect(0, 0, finalCanvas.width, finalCanvas.height);
+    try {
+      ctx.drawImage(srcCanvas, 0, 0, finalCanvas.width, finalCanvas.height);
+    } catch (_) {}
+
+    captionOverlay.classList.remove("hidden");
+
+    // Push the final drawing to the gallery. Non-blocking; failures are logged.
+    uploadFinalDrawing(finalCanvas, chosenPrompt);
+  });
 }
 
 function uploadFinalDrawing(canvas, prompt) {
@@ -518,9 +540,14 @@ onDraw(() => {
       renderPoints = stroke._smoothed;
     }
 
-    for (let i = 1; i < renderPoints.length; i++) {
-      drawLine({ p1: renderPoints[i-1], p2: renderPoints[i], width: stroke.size, color: c, opacity: stroke.opacity, cap: "round" });
-    }
+    drawLines({
+      pts: renderPoints,
+      width: stroke.size,
+      color: c,
+      opacity: stroke.opacity,
+      cap: "round",
+      join: "round",
+    });
   }
 
   // Tracker cursor crosshairs — P1 (green) and P2 (cyan)

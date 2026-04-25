@@ -30,13 +30,6 @@ function runPromptSelect() {
   const myRound = ++roundId;
   chosenPrompt = PROMPTS[Math.floor(Math.random() * PROMPTS.length)];
 
-  // Pre-populate the top-left prompt label (stays hidden until startGame()).
-  const promptLabel = document.getElementById("promptLabel");
-  if (promptLabel) {
-    promptLabel.textContent = chosenPrompt.text;
-    promptLabel.classList.remove("visible");
-  }
-
   const scroller = document.getElementById("promptScroller");
   const track    = document.getElementById("promptScrollerTrack");
   track.innerHTML = "";
@@ -103,7 +96,23 @@ function runPromptSelect() {
 function startCountdownAfterPrompt(myRound) {
   const promptOverlay    = document.getElementById("promptOverlay");
   const countdownOverlay = document.getElementById("countdownOverlay");
+  const readyOverlay     = document.getElementById("readyOverlay");
   const video            = document.getElementById("countdownVideo");
+
+  // Show "Players, get your pencils ready!" for 2.5s before the countdown.
+  if (readyOverlay) {
+    promptOverlay.style.display = "none";
+    readyOverlay.classList.remove("hidden");
+    setTimeout(() => {
+      if (myRound !== roundId) return;
+      readyOverlay.classList.add("hidden");
+      beginCountdown();
+    }, 2500);
+  } else {
+    beginCountdown();
+  }
+
+  function beginCountdown() {
 
   let finished = false;
   const finish = () => {
@@ -148,6 +157,7 @@ function startCountdownAfterPrompt(myRound) {
     video.addEventListener("canplay", onReady);
     setTimeout(onReady, 5000);
     try { video.load(); } catch (_) {}
+  }
   }
 }
 
@@ -216,14 +226,12 @@ function startTimer() {
 
 function startGame() {
   gameStarted = true;
-  document.getElementById("promptLabel")?.classList.add("visible");
   startTimer();
 }
 
 function endGame() {
   if (gameEnded) return;
   gameEnded = true;
-  document.getElementById("promptLabel")?.classList.remove("visible");
   setTimeout(() => {
     if (isFollower) {
       sendFinalSnapshot();
@@ -262,8 +270,6 @@ function enterIdle() {
 function enterPlayFromMessage(prompt) {
   chosenPrompt = prompt;
   document.body.classList.remove("idle");
-  const label = document.getElementById("promptLabel");
-  if (label) label.textContent = chosenPrompt?.text || "";
   // Reset stroke state for the new round.
   playerState.strokes = [];
   currentStroke = null;
@@ -476,9 +482,14 @@ onDraw(() => {
       renderPoints = stroke._smoothed;
     }
 
-    for (let i = 1; i < renderPoints.length; i++) {
-      drawLine({ p1: renderPoints[i-1], p2: renderPoints[i], width: stroke.size, color: c, opacity: stroke.opacity, cap: "round" });
-    }
+    drawLines({
+      pts: renderPoints,
+      width: stroke.size,
+      color: c,
+      opacity: stroke.opacity,
+      cap: "round",
+      join: "round",
+    });
   }
 
   // Tracker cursor crosshair
@@ -528,9 +539,6 @@ function restartGame() {
 
   // Hide end-screen overlay
   document.getElementById("captionOverlay").classList.add("hidden");
-
-  // Hide the top-left prompt label until the next round starts drawing
-  document.getElementById("promptLabel")?.classList.remove("visible");
 
   // Re-show prompt overlay for the next round
   const promptOverlay = document.getElementById("promptOverlay");

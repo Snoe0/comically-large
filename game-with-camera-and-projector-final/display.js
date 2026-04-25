@@ -21,6 +21,7 @@ const promptLabel      = document.getElementById("promptLabel");
 const promptOverlay    = document.getElementById("promptOverlay");
 const countdownOverlay = document.getElementById("countdownOverlay");
 const captionOverlay   = document.getElementById("captionOverlay");
+const readyOverlay     = document.getElementById("readyOverlay");
 const captionText      = document.getElementById("captionText");
 const frameImg         = document.getElementById("frameImg");
 const finalCanvas      = document.getElementById("finalDrawingCanvas");
@@ -45,6 +46,7 @@ function hideAllOverlays() {
   promptOverlay.style.display = "";
   countdownOverlay.classList.add("hidden");
   captionOverlay.classList.add("hidden");
+  readyOverlay?.classList.add("hidden");
 }
 
 function showPromptOverlayFresh() {
@@ -127,6 +129,21 @@ function runPromptSelect() {
 
 // ─── Countdown video ─────────────────────────────────────────────────────────
 function startCountdownAfterPrompt(myRound) {
+  // Show "Players, get your pencils ready!" for 2.5s before the countdown.
+  if (readyOverlay) {
+    promptOverlay.style.display = "none";
+    readyOverlay.classList.remove("hidden");
+    setTimeout(() => {
+      if (myRound !== roundId) return;
+      readyOverlay.classList.add("hidden");
+      beginCountdownPhase(myRound);
+    }, 2500);
+  } else {
+    beginCountdownPhase(myRound);
+  }
+}
+
+function beginCountdownPhase(myRound) {
   setBodyPhase("countdown");
   Sync.send("phase", { phase: "countdown" });
 
