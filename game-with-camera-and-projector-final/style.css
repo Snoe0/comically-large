@@ -159,12 +159,15 @@ body {
 .hidden { display: none !important; }
 
 /* ---- Idle state on game pages (follower mode, between rounds) ---- */
-/* Floor projection goes pure black; only overlays controlled by JS show. */
-body.idle { background: #000; }
-body.idle > img { display: none; }
+/* Layout stays visible but is desaturated and non-interactive until the
+   round begins; JS overlays sit above and remain fully interactive. */
 body.idle .game-layout,
 body.idle .timer-display,
-body.idle .prompt-label { display: none; }
+body.idle .prompt-label,
+body.idle > img {
+  filter: grayscale(1);
+  pointer-events: none;
+}
 
 /* ---- Display (audience) page ---- */
 /* Default black; switches to white during the drawing phase so the big

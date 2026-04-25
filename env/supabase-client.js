@@ -7,6 +7,7 @@
 // Exposes:
 //   window.ComicallyLargeDrawings.uploadDrawing(blob, { caption, prompt })
 //   window.ComicallyLargeDrawings.listDrawings({ limit } = {})
+//   window.ComicallyLargeDrawings.deleteDrawing(path)
 
 (function () {
   const cfg = window.SUPABASE_CONFIG;
@@ -101,9 +102,28 @@
     return data?.publicUrl || "";
   }
 
+  async function deleteDrawing(path) {
+    if (!path) throw new Error("deleteDrawing requires a path");
+
+    const { error: rmErr } = await client.storage.from(bucket).remove([path]);
+    if (rmErr) {
+      console.error("[supabase-client] storage delete failed:", rmErr);
+      throw rmErr;
+    }
+
+    if (table) {
+      const { error: delErr } = await client.from(table).delete().eq("object_path", path);
+      if (delErr) {
+        // Storage object is already gone — surface the row failure but don't try to recreate it.
+        console.warn("[supabase-client] metadata delete failed:", delErr);
+      }
+    }
+  }
+
   window.ComicallyLargeDrawings = {
     uploadDrawing,
     listDrawings,
+    deleteDrawing,
     publicUrl,
     _client: client,
   };
@@ -112,6 +132,7 @@
     return {
       uploadDrawing: async () => { throw new Error("Drawings disabled: " + reason); },
       listDrawings:  async () => [],
+      deleteDrawing: async () => { throw new Error("Drawings disabled: " + reason); },
       publicUrl:     () => "",
     };
   }

@@ -1,10 +1,15 @@
 """
 Comically Large Paintbrush — Camera Tracker (final, mode-switching)
 ====================================================================
-Tracks ONE or TWO bright/colored objects via webcam — pencil count is set at
-runtime by the game over HTTP. Applies a perspective warp to map the physical
-canvas corners into a normalized 4:3 coordinate space, and exposes the result
-over a tiny HTTP server so the game can poll it.
+Tracks bright/colored objects via webcam — pencil count is set at runtime by
+the game over HTTP. Applies a perspective warp to map the physical canvas
+corners into a normalized 4:3 coordinate space, and exposes the result over a
+tiny HTTP server so the game can poll it.
+
+In dual (2-player) mode, the canvas is split down the middle in warped
+coordinates: any centroid with normalized x < 0.5 is reported as player 1,
+any centroid with normalized x ≥ 0.5 is reported as player 2. Color is
+NOT used to distinguish players — a single tracking mode/color is enough.
 
 Usage
 -----
@@ -27,8 +32,9 @@ Controls (OpenCV window)
   Q / ESC    — quit
 
   CUSTOM mode only:
-    Left-click   — sample color under cursor → set Pencil 1 color
-    Right-click  — sample color under cursor → set Pencil 2 color
+    Left-click   — sample color under cursor → set pencil color
+    (Right-click is unused. In dual mode, side-of-canvas determines which
+     centroid becomes player 1 vs 2, so a single color sample suffices.)
 
 HTTP endpoint (default port 5050)
 ----------------------------------
@@ -64,7 +70,7 @@ except ImportError:
 
 # ── Config ────────────────────────────────────────────────────────────────────
 PORT        = 5050
-CAMERA_IDX  = 2                    # Only used when USE_REALSENSE is False
+CAMERA_IDX  = 3                    # Only used when USE_REALSENSE is False
 FLIP_H      = False
 ROTATE_180  = True                 # Camera is physically mounted upside down
 WINDOW_NAME = "CLPbrush Tracker  |  C=corners  M=mode  [/]=threshold  R=reset  Q=quit"
@@ -74,16 +80,19 @@ WINDOW_NAME = "CLPbrush Tracker  |  C=corners  M=mode  [/]=threshold  R=reset  Q
 # OpenCV's VideoCapture. Use pyrealsense2 to pull the left-IR stream directly.
 USE_REALSENSE       = True
 RS_IR_INDEX         = 1            # 1 = left IR imager, 2 = right IR imager
-RS_WIDTH            = 1280
-RS_HEIGHT           = 720
+# USB 2.1 limits the D455 to a subset of stream modes — 1280x720 is not available
+# over USB 2 even for IR-only. 640x480@30 is a well-documented USB 2 IR mode
+# (~74 Mbps, well under the ~280 Mbps USB 2.1 ceiling).
+RS_WIDTH            = 640
+RS_HEIGHT           = 480
 RS_FPS              = 30
 RS_EMITTER_ENABLED  = False        # D455's dot projector — off = clean passive IR
 # Manual exposure forces the scene dark so only the IR LED punches through.
 # Auto-exposure fights you here — it brightens the whole frame and lights up
 # every reflection. Start low (~500 µs) and raise if the LED itself is too dim.
 RS_AUTO_EXPOSURE    = False
-RS_EXPOSURE_US      = 700          # microseconds; typical useful range ~100–8000
-RS_GAIN             = 16           # 16 = minimum on D455 IR
+RS_EXPOSURE_US      = 2000         # microseconds; typical useful range ~100–8000
+RS_GAIN             = 24           # 16 = minimum on D455 IR
 
 MODES = ["BRIGHT", "RED", "GREEN", "BLUE", "CUSTOM"]
 
@@ -105,16 +114,14 @@ _state = {
 _num_players = 2
 _corners     = []
 _mode        = "BRIGHT"
-_thresh      = 110
+_thresh      = 80
 _hue_tol     = 15
 
-# Custom mode: two independent HSV color ranges
-_c1_low  = np.array([100, 150, 100])   # Pencil 1 (blue-ish default)
+# CUSTOM mode: a single HSV color range. Player 1 vs 2 is determined by
+# which side of the canvas midline a centroid falls on, not by color.
+_c1_low  = np.array([100, 150, 100])   # default blue-ish
 _c1_high = np.array([130, 255, 255])
-_c2_low  = np.array([35,  100,  80])   # Pencil 2 (green-ish default)
-_c2_high = np.array([85,  255, 255])
 _c1_set  = False                        # True once user has clicked a color
-_c2_set  = False
 
 # ── Button region calibration ──────────────────────────────────────────────────
 # Each button gets its own perspective transform built from 4 camera-pixel
@@ -414,10 +421,54 @@ def find_two_centroids(mask):
         results.append(None)
     return results[0], results[1]
 
+def find_n_centroids(mask, n=4):
+    """Return up to n centroids of the largest contours, sorted by area desc.
+
+    Used by the dual-mode side-based assignment so a stray reflection on the
+    wrong side of the canvas can't mask a real pencil on the correct side
+    (unlike find_two_centroids, which would just return the top two by area).
+    """
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if not contours:
+        return []
+    contours = sorted(contours, key=cv2.contourArea, reverse=True)
+    out = []
+    for c in contours[:n]:
+        if cv2.contourArea(c) < MIN_CONTOUR_AREA:
+            break
+        M = cv2.moments(c)
+        if M["m00"] == 0:
+            continue
+        out.append((int(M["m10"] / M["m00"]), int(M["m01"] / M["m00"])))
+    return out
+
+def assign_by_side(centroids, M_warp, out_w):
+    """Pick the largest centroid on each side of the warped midline (x=0.5).
+
+    `centroids` is assumed to be sorted by area descending. Returns
+    (c_left, c_right); either may be None if no centroid landed on that side.
+    Centroids whose warped x lies outside [0,1] still get assigned to
+    whichever side they fall toward — set_points() downstream will mark them
+    inactive based on bounds, which is the correct behavior.
+    """
+    c_left = None
+    c_right = None
+    for cx, cy in centroids:
+        v  = np.array([[[cx, cy]]], dtype="float32")
+        r  = cv2.perspectiveTransform(v, M_warp)
+        nx = float(r[0, 0, 0]) / out_w
+        if nx < 0.5 and c_left is None:
+            c_left = (cx, cy)
+        elif nx >= 0.5 and c_right is None:
+            c_right = (cx, cy)
+        if c_left is not None and c_right is not None:
+            break
+    return c_left, c_right
+
 # ── Mouse callback ─────────────────────────────────────────────────────────────
 def on_mouse(event, x, y, flags, param):
     global _corners, _corner_mode
-    global _c1_low, _c1_high, _c2_low, _c2_high, _c1_set, _c2_set, _last_frame
+    global _c1_low, _c1_high, _c1_set, _last_frame
     global _button_setup_mode, _button_setup_idx, _button_setup_pts
 
     # Canvas corner-selection mode takes priority
@@ -456,7 +507,8 @@ def on_mouse(event, x, y, flags, param):
                     print(f"  Next: click 4 corners for [{names[_button_setup_idx]}]")
         return
 
-    # CUSTOM mode: sample color under cursor
+    # CUSTOM mode: sample color under cursor. Single sample — side-of-canvas
+    # decides which player a centroid belongs to in dual mode.
     if _mode == "CUSTOM" and _last_frame is not None:
         if event == cv2.EVENT_LBUTTONDOWN:
             hsv = cv2.cvtColor(_last_frame, cv2.COLOR_BGR2HSV)
@@ -464,14 +516,7 @@ def on_mouse(event, x, y, flags, param):
             _c1_low  = np.array([max(0,   int(h) - 15), max(0,   int(s) - 60), max(0,   int(v) - 60)])
             _c1_high = np.array([min(179, int(h) + 15), 255, 255])
             _c1_set  = True
-            print(f"[CUSTOM] Pencil 1 color -> H={h} S={s} V={v}")
-        elif event == cv2.EVENT_RBUTTONDOWN:
-            hsv = cv2.cvtColor(_last_frame, cv2.COLOR_BGR2HSV)
-            h, s, v = hsv[y, x]
-            _c2_low  = np.array([max(0,   int(h) - 15), max(0,   int(s) - 60), max(0,   int(v) - 60)])
-            _c2_high = np.array([min(179, int(h) + 15), 255, 255])
-            _c2_set  = True
-            print(f"[CUSTOM] Pencil 2 color -> H={h} S={s} V={v}")
+            print(f"[CUSTOM] Pencil color -> H={h} S={s} V={v}")
 
 # ── Drawing helpers ────────────────────────────────────────────────────────────
 P1_COLOR = (0, 255, 80)    # green
@@ -534,6 +579,7 @@ class RealsenseCapture:
         """Start the pipeline and verify that at least one IR frame arrives."""
         self._pipeline = rs.pipeline()
         cfg = rs.config()
+        # IR-only over USB 2.1 — depth stream omitted to stay under bandwidth.
         cfg.enable_stream(
             rs.stream.infrared, self._ir_index,
             self._width, self._height, rs.format.y8, self._fps,
@@ -545,9 +591,7 @@ class RealsenseCapture:
             self._pipeline = None
             return False
 
-        # The IR dot projector lives on the depth (stereo) sensor. Toggle it
-        # even though we didn't enable the depth stream — the option still
-        # applies to the IR imagers. Exposure + gain also live on this sensor.
+        # The IR dot projector, exposure, and gain all live on the depth sensor.
         try:
             depth_sensor = profile.get_device().first_depth_sensor()
             if depth_sensor.supports(rs.option.emitter_enabled):
@@ -694,7 +738,7 @@ def main():
     print("  C = select canvas corners (4 clicks)")
     print("  B = calibrate button regions (per current mode: 4 in solo, 8 in dual)")
     print("  M = cycle tracking mode")
-    print("  In CUSTOM mode: left-click = Pencil 1 color, right-click = Pencil 2 color")
+    print("  In CUSTOM mode: left-click samples pencil color (side -> player)")
     print("  Q / ESC = quit\n")
 
     while True:
@@ -717,27 +761,28 @@ def main():
             M_warp, out_w, out_h = build_transform(_corners)
 
         # ── Track ─────────────────────────────────────────────────────────────
+        # All modes use a single mask. In dual mode we look for several
+        # centroids and assign them to p1/p2 by which side of the warped
+        # canvas (x=0.5) they fall on, instead of by area or color.
+        if _mode == "CUSTOM":
+            mask = make_hsv_mask(frame, _c1_low, _c1_high)
+        else:
+            mask = make_mask(frame, _mode, _thresh, _hue_tol)
+        disp_mask = mask
+
         if _num_players == 1:
-            if _mode == "CUSTOM":
-                mask1     = make_hsv_mask(frame, _c1_low, _c1_high)
-                c1        = find_centroid(mask1)
-                disp_mask = mask1
-            else:
-                mask      = make_mask(frame, _mode, _thresh, _hue_tol)
-                c1        = find_centroid(mask)
-                disp_mask = mask
+            c1 = find_centroid(mask)
             c2 = None
         else:
-            if _mode == "CUSTOM":
-                mask1     = make_hsv_mask(frame, _c1_low, _c1_high)
-                mask2     = make_hsv_mask(frame, _c2_low, _c2_high)
-                c1        = find_centroid(mask1)
-                c2        = find_centroid(mask2)
-                disp_mask = cv2.bitwise_or(mask1, mask2)
+            if M_warp is not None:
+                # Side-based assignment: largest centroid on each half wins.
+                candidates = find_n_centroids(mask, n=4)
+                c1, c2 = assign_by_side(candidates, M_warp, out_w)
             else:
-                mask      = make_mask(frame, _mode, _thresh, _hue_tol)
-                c1, c2    = find_two_centroids(mask)
-                disp_mask = mask
+                # No canvas warp yet → no midline to compare against. Fall
+                # back to the legacy "biggest two by area" behavior so the
+                # operator still sees crosshairs while calibrating corners.
+                c1, c2 = find_two_centroids(mask)
 
         set_points(c1, c2, M_warp, out_w, out_h, frame.shape)
         check_button_hits([c1, c2] if _num_players == 2 else [c1])
@@ -765,6 +810,21 @@ def main():
             # matches the perspective mapping (TL -> TR -> BR -> BL).
             pts = np.array(_corners, dtype=np.int32)
             cv2.polylines(display, [pts], True, (0, 200, 255), 2)
+            # In dual mode, also draw the midline (warped x=0.5) so the
+            # operator can see which side a pencil will be assigned to.
+            if _num_players == 2 and M_warp is not None:
+                try:
+                    inv = np.linalg.inv(M_warp)
+                    top    = np.array([[[0.5 * out_w, 0.0]]],          dtype="float32")
+                    bottom = np.array([[[0.5 * out_w, float(out_h)]]], dtype="float32")
+                    tp = cv2.perspectiveTransform(top,    inv)[0, 0]
+                    bp = cv2.perspectiveTransform(bottom, inv)[0, 0]
+                    cv2.line(display,
+                             (int(tp[0]), int(tp[1])),
+                             (int(bp[0]), int(bp[1])),
+                             (180, 180, 255), 2, cv2.LINE_AA)
+                except np.linalg.LinAlgError:
+                    pass
 
         # ── Button region overlays ────────────────────────────────────────────
         active_regions = _active_button_regions()
@@ -796,14 +856,11 @@ def main():
         # ── CUSTOM mode color-swatch overlay ──────────────────────────────────
         if _mode == "CUSTOM":
             cv2.putText(display,
-                        "CUSTOM: Left-click=Pencil1  Right-click=Pencil2",
+                        "CUSTOM: Left-click samples pencil color (side -> player)",
                         (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (200, 200, 0), 2)
             draw_color_swatch(display, _c1_low, _c1_high,
-                              "Pencil 1" + (" (set)" if _c1_set else " (default)"),
+                              "Pencil" + (" (set)" if _c1_set else " (default)"),
                               20, 70, _c1_set)
-            draw_color_swatch(display, _c2_low, _c2_high,
-                              "Pencil 2" + (" (set)" if _c2_set else " (default)"),
-                              20, 110, _c2_set)
 
         # ── HUD ───────────────────────────────────────────────────────────────
         warp_str  = "ON" if M_warp is not None else "OFF (press C)"

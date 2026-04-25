@@ -76,7 +76,7 @@ async function loadDrawings() {
     drawings = items;
     if (items.length === 0) {
       setStatus("No drawings yet. Finish a round of the game to fill this list.");
-      gridEl.innerHTML = "";
+      clearGrid();
       return;
     }
     setStatus("");
@@ -88,21 +88,78 @@ async function loadDrawings() {
 }
 
 // ---------- Grid ----------
+function clearGrid() {
+  while (gridEl.firstChild) gridEl.removeChild(gridEl.firstChild);
+}
+
 function renderGrid() {
-  gridEl.innerHTML = "";
+  clearGrid();
   drawings.forEach((item, i) => {
+    const cell = document.createElement("div");
+    cell.className = "thumb-cell";
+    cell.dataset.index = String(i);
+
     const img = new Image();
     // CORS must be set BEFORE src so the image is fetched with the right headers.
     img.crossOrigin = "anonymous";
     img.className = "thumb";
     img.loading = "lazy";
     img.decoding = "async";
-    img.alt = item.caption || item.prompt || `drawing #${i + 1}`;
+    img.alt = item.caption || item.prompt || `drawing #${drawings.length - i}`;
     img.dataset.index = String(i);
     img.src = item.url;
     img.addEventListener("click", () => selectDrawing(item, i));
-    gridEl.appendChild(img);
+    cell.appendChild(img);
+
+    const delBtn = document.createElement("button");
+    delBtn.type = "button";
+    delBtn.className = "thumb-delete";
+    delBtn.title = "Delete this drawing";
+    delBtn.setAttribute("aria-label", "Delete this drawing");
+    delBtn.textContent = "✕";
+    delBtn.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      deleteDrawing(item, i);
+    });
+    cell.appendChild(delBtn);
+
+    gridEl.appendChild(cell);
   });
+}
+
+async function deleteDrawing(item, index) {
+  const api = window.ComicallyLargeDrawings;
+  if (!api || typeof api.deleteDrawing !== "function") {
+    setStatus("Delete not available — Supabase client not loaded.");
+    return;
+  }
+  const label = "#" + String(drawings.length - index).padStart(4, "0");
+  if (!window.confirm(`Delete drawing ${label}? This cannot be undone.`)) return;
+
+  try {
+    await api.deleteDrawing(item.path);
+    drawings.splice(index, 1);
+    if (currentItem === item) {
+      currentItem = null;
+      currentIndex = -1;
+      currentPngBlob = null;
+      emailBtn.disabled = true;
+      downloadBtn.disabled = true;
+      const ctx = previewCanvas.getContext("2d");
+      ctx.clearRect(0, 0, previewCanvas.width, previewCanvas.height);
+      byteCountEl.textContent = "";
+      setEmailStatus("");
+    }
+    if (drawings.length === 0) {
+      setStatus("No drawings yet. Finish a round of the game to fill this list.");
+      clearGrid();
+    } else {
+      renderGrid();
+    }
+  } catch (err) {
+    console.error("[mail-a-masterpiece] deleteDrawing failed:", err);
+    setStatus("Couldn't delete that drawing. Check the console for details.");
+  }
 }
 
 async function selectDrawing(item, index) {
@@ -142,7 +199,7 @@ async function renderTemplate(item, index) {
   ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
 
   // Top band: #NNNN label (left) + "COMICALLY LARGE" speech bubble (right)
-  const label = "#" + String(index + 1).padStart(4, "0");
+  const label = "#" + String(drawings.length - index).padStart(4, "0");
   ctx.fillStyle = "#000";
   ctx.textAlign = "left";
   ctx.textBaseline = "alphabetic";
@@ -328,7 +385,7 @@ async function updateOutput() {
 }
 
 function pngFilename() {
-  const base = currentIndex >= 0 ? `comically-large-${String(currentIndex + 1).padStart(4, "0")}` : "comically-large";
+  const base = currentIndex >= 0 ? `comically-large-${String(drawings.length - currentIndex).padStart(4, "0")}` : "comically-large";
   return `${base}.png`;
 }
 
