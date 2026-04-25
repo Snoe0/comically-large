@@ -16,6 +16,13 @@ let gameEnded    = false;
 // against this to bail out, preventing timers/state from stacking on restart.
 let roundId      = 0;
 
+// When display.html is open in another tab/window it announces itself with a
+// `display-ready` ping; we then become a "follower" — skip the local prompt
+// scroller / countdown / framed-result overlays and let the display drive the
+// round via BroadcastChannel messages. If no ping arrives within 2s of load,
+// we fall back to the standalone flow (the existing local behaviour).
+let isFollower = false;
+
 // ─── Prompt select animation (scrolling list) ────────────────────────────────
 const OPTION_HEIGHT = 96; // must match .prompt-option height in CSS (px)
 
@@ -194,6 +201,7 @@ function startTimer() {
   clearInterval(timerInterval); // defensive: never stack intervals
   timeLeft = TOTAL_TIME;
   renderTimer();
+  Sync.send("tick", { timeLeft });
   timerInterval = setInterval(() => {
     timeLeft--;
     if (timeLeft <= 0) {
@@ -202,6 +210,7 @@ function startTimer() {
       endGame();
     }
     renderTimer();
+    Sync.send("tick", { timeLeft });
   }, 1000);
 }
 
@@ -215,7 +224,52 @@ function endGame() {
   if (gameEnded) return;
   gameEnded = true;
   document.getElementById("promptLabel")?.classList.remove("visible");
-  setTimeout(showFramedResult, 400);
+  setTimeout(() => {
+    if (isFollower) {
+      sendFinalSnapshot();
+      enterIdle();
+    } else {
+      showFramedResult();
+    }
+  }, 400);
+}
+
+function sendFinalSnapshot() {
+  // Render the live canvas onto a temp 2D canvas with a white background, then
+  // ship the dataURL to display.html for framed presentation. We also still run
+  // the gallery upload from here — the game page owns the canvas, so it's the
+  // only side that can produce the snapshot.
+  const srcCanvas = document.getElementById("gameCanvas");
+  const tmp = document.createElement("canvas");
+  tmp.width  = srcCanvas.width;
+  tmp.height = srcCanvas.height;
+  const ctx = tmp.getContext("2d");
+  ctx.fillStyle = "#fff";
+  ctx.fillRect(0, 0, tmp.width, tmp.height);
+  try { ctx.drawImage(srcCanvas, 0, 0, tmp.width, tmp.height); } catch (_) {}
+  let dataUrl = "";
+  try { dataUrl = tmp.toDataURL("image/png"); } catch (_) {}
+  Sync.send("final", { dataUrl, prompt: chosenPrompt });
+  uploadFinalDrawing(tmp, chosenPrompt);
+}
+
+// Idle/play visibility: in follower mode we hide the canvas + sidebars + timer
+// while waiting for the next round and during the result phase, so the floor
+// projection just shows black.
+function enterIdle() {
+  document.body.classList.add("idle");
+}
+function enterPlayFromMessage(prompt) {
+  chosenPrompt = prompt;
+  document.body.classList.remove("idle");
+  const label = document.getElementById("promptLabel");
+  if (label) label.textContent = chosenPrompt?.text || "";
+  // Reset stroke state for the new round.
+  playerState.strokes = [];
+  currentStroke = null;
+  trackerStroke = null;
+  gameEnded = false;
+  startGame();
 }
 
 function showFramedResult() {
@@ -520,13 +574,82 @@ document.addEventListener("keydown", (e) => {
     switchMode(2, "dual.html");
   } else if (e.code === "Space") {
     e.preventDefault();
-    restartGame();
+    if (isFollower) {
+      Sync.send("restart");
+      // Clear local state and wait for the next phase:"play" message.
+      gameStarted = false;
+      gameEnded   = false;
+      playerState.strokes = [];
+      currentStroke = null;
+      trackerStroke = null;
+      clearInterval(timerInterval);
+      timeLeft = TOTAL_TIME;
+      renderTimer();
+      enterIdle();
+    } else {
+      restartGame();
+    }
   }
 });
 
+// ─── Follower-mode message wiring ────────────────────────────────────────────
+Sync.on("phase", (msg) => {
+  if (!isFollower) return;
+  if (msg.phase === "play" && msg.prompt) {
+    enterPlayFromMessage(msg.prompt);
+  } else if (msg.phase === "prompt" || msg.phase === "countdown") {
+    // Display is showing pre-game UI; floor stays black.
+    enterIdle();
+  }
+});
+
+Sync.on("restart", () => {
+  if (!isFollower) return;
+  // Display will follow up with phase:"prompt" then phase:"play". Just clear.
+  gameStarted = false;
+  gameEnded   = false;
+  playerState.strokes = [];
+  currentStroke = null;
+  trackerStroke = null;
+  clearInterval(timerInterval);
+  timeLeft = TOTAL_TIME;
+  renderTimer();
+  enterIdle();
+});
+
 // ─── Kick off ────────────────────────────────────────────────────────────────
-fetch("../prompts.json")
-  .then((r) => r.json())
-  .then((data) => { PROMPTS = data; })
-  .catch((err) => { console.error("Failed to load prompts.json:", err); })
-  .finally(() => { runPromptSelect(); });
+// Race: did display.html ping us? If so, run as follower and let it drive the
+// round. Otherwise after 2s, fall back to the standalone flow.
+//
+// Boot in idle/black with overlays hidden so we don't flash the prompt-select
+// UI for the 2s before we know whether display.html is open.
+document.body.classList.add("idle");
+document.getElementById("promptOverlay")?.classList.add("hidden");
+
+function startStandalone() {
+  document.body.classList.remove("idle");
+  document.getElementById("promptOverlay")?.classList.remove("hidden");
+  fetch("../prompts.json")
+    .then((r) => r.json())
+    .then((data) => { PROMPTS = data; })
+    .catch((err) => { console.error("Failed to load prompts.json:", err); })
+    .finally(() => { runPromptSelect(); });
+}
+
+let kickedOff = false;
+const offDisplayReady = Sync.on("display-ready", () => {
+  if (kickedOff) return;
+  kickedOff = true;
+  isFollower = true;
+  Sync.send("game-ready", { mode: "solo" });
+  enterIdle();
+  // Display will broadcast phase:"play" with a prompt when ready.
+});
+// Ping display in case it's already loaded — it'll respond with display-ready.
+Sync.send("game-loading", { mode: "solo" });
+setTimeout(() => {
+  if (kickedOff) return;
+  kickedOff = true;
+  offDisplayReady();
+  startStandalone();
+}, 2000);

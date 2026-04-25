@@ -16,6 +16,9 @@ let gameEnded    = false;
 // against this to bail out, preventing timers/state from stacking on restart.
 let roundId      = 0;
 
+// Follower mode flag — see game-solo.js for the rationale.
+let isFollower = false;
+
 // ─── Prompt select animation (scrolling list) ────────────────────────────────
 const OPTION_HEIGHT = 96; // must match .prompt-option height in CSS (px)
 
@@ -195,6 +198,7 @@ function startTimer() {
   clearInterval(timerInterval); // defensive: never stack intervals
   timeLeft = TOTAL_TIME;
   renderTimer();
+  Sync.send("tick", { timeLeft });
   timerInterval = setInterval(() => {
     timeLeft--;
     if (timeLeft <= 0) {
@@ -203,6 +207,7 @@ function startTimer() {
       endGame();
     }
     renderTimer();
+    Sync.send("tick", { timeLeft });
   }, 1000);
 }
 
@@ -214,7 +219,53 @@ function startGame() {
 function endGame() {
   if (gameEnded) return;
   gameEnded = true;
-  setTimeout(showFramedResult, 400);
+  setTimeout(() => {
+    if (isFollower) {
+      sendFinalSnapshot();
+      enterIdle();
+    } else {
+      showFramedResult();
+    }
+  }, 400);
+}
+
+function sendFinalSnapshot() {
+  // Recolor strokes to black for the framed result, same as showFramedResult().
+  for (const p of [1, 2]) {
+    for (const stroke of playerState[p].strokes) stroke.color = [0, 0, 0];
+  }
+  // Give the renderer one frame to redraw with the new colors before snapshotting.
+  requestAnimationFrame(() => {
+    const srcCanvas = document.getElementById("gameCanvas");
+    const tmp = document.createElement("canvas");
+    tmp.width  = srcCanvas.width;
+    tmp.height = srcCanvas.height;
+    const ctx = tmp.getContext("2d");
+    ctx.fillStyle = "#fff";
+    ctx.fillRect(0, 0, tmp.width, tmp.height);
+    try { ctx.drawImage(srcCanvas, 0, 0, tmp.width, tmp.height); } catch (_) {}
+    let dataUrl = "";
+    try { dataUrl = tmp.toDataURL("image/png"); } catch (_) {}
+    Sync.send("final", { dataUrl, prompt: chosenPrompt });
+    uploadFinalDrawing(tmp, chosenPrompt);
+  });
+}
+
+function enterIdle() {
+  document.body.classList.add("idle");
+}
+function enterPlayFromMessage(prompt) {
+  chosenPrompt = prompt;
+  document.body.classList.remove("idle");
+  // Reset stroke state for the new round.
+  playerState[1].strokes = [];
+  playerState[2].strokes = [];
+  trackerStroke[1] = null;
+  trackerStroke[2] = null;
+  currentStroke = null;
+  trackerCurrentStroke = null;
+  gameEnded = false;
+  startGame();
 }
 
 function showFramedResult() {
@@ -571,13 +622,79 @@ document.addEventListener("keydown", (e) => {
     switchMode(2, "dual.html");
   } else if (e.code === "Space") {
     e.preventDefault();
-    restartGame();
+    if (isFollower) {
+      Sync.send("restart");
+      gameStarted = false;
+      gameEnded   = false;
+      playerState[1].strokes = [];
+      playerState[2].strokes = [];
+      currentStroke = null;
+      trackerCurrentStroke = null;
+      trackerStroke[1] = null;
+      trackerStroke[2] = null;
+      clearInterval(timerInterval);
+      timeLeft = TOTAL_TIME;
+      renderTimer();
+      enterIdle();
+    } else {
+      restartGame();
+    }
   }
 });
 
+// ─── Follower-mode message wiring ────────────────────────────────────────────
+Sync.on("phase", (msg) => {
+  if (!isFollower) return;
+  if (msg.phase === "play" && msg.prompt) {
+    enterPlayFromMessage(msg.prompt);
+  } else if (msg.phase === "prompt" || msg.phase === "countdown") {
+    enterIdle();
+  }
+});
+
+Sync.on("restart", () => {
+  if (!isFollower) return;
+  gameStarted = false;
+  gameEnded   = false;
+  playerState[1].strokes = [];
+  playerState[2].strokes = [];
+  currentStroke = null;
+  trackerCurrentStroke = null;
+  trackerStroke[1] = null;
+  trackerStroke[2] = null;
+  clearInterval(timerInterval);
+  timeLeft = TOTAL_TIME;
+  renderTimer();
+  enterIdle();
+});
+
 // ─── Kick off ────────────────────────────────────────────────────────────────
-fetch("../prompts.json")
-  .then((r) => r.json())
-  .then((data) => { PROMPTS = data; })
-  .catch((err) => { console.error("Failed to load prompts.json:", err); })
-  .finally(() => { runPromptSelect(); });
+// See game-solo.js for the rationale on the boot race.
+document.body.classList.add("idle");
+document.getElementById("promptOverlay")?.classList.add("hidden");
+
+function startStandalone() {
+  document.body.classList.remove("idle");
+  document.getElementById("promptOverlay")?.classList.remove("hidden");
+  fetch("../prompts.json")
+    .then((r) => r.json())
+    .then((data) => { PROMPTS = data; })
+    .catch((err) => { console.error("Failed to load prompts.json:", err); })
+    .finally(() => { runPromptSelect(); });
+}
+
+let kickedOff = false;
+const offDisplayReady = Sync.on("display-ready", () => {
+  if (kickedOff) return;
+  kickedOff = true;
+  isFollower = true;
+  Sync.send("game-ready", { mode: "dual" });
+  enterIdle();
+});
+Sync.send("game-loading", { mode: "dual" });
+setTimeout(() => {
+  if (kickedOff) return;
+  kickedOff = true;
+  offDisplayReady();
+  startStandalone();
+}, 2000);

@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Comically Large — Display</title>
+  <link rel="stylesheet" href="https://use.typekit.net/loy8wwx.css">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body class="display">
+  <!-- Top-left prompt label (shown during play phase) -->
+  <div id="promptLabel" class="prompt-label"></div>
+
+  <!-- Prompt select overlay -->
+  <div id="promptOverlay" class="prompt-overlay">
+    <div class="comic-panel">
+      <h1 class="prompt-title">YOUR PROMPT IS...</h1>
+      <div id="promptScroller" class="prompt-scroller">
+        <div id="promptScrollerTrack" class="prompt-scroller-track"></div>
+        <div class="scroller-highlight"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Countdown video overlay -->
+  <div id="countdownOverlay" class="countdown-overlay hidden">
+    <video id="countdownVideo" src="../assets/comic-countdown.mp4" playsinline preload="auto" muted></video>
+  </div>
+
+  <!-- Final framed caption overlay (shown at end) -->
+  <div id="captionOverlay" class="caption-overlay hidden">
+    <div class="frame-wrap">
+      <img class="frame-img" id="frameImg" src="../assets/pictureframesAsset 1 1.png" alt="frame" />
+      <canvas id="finalDrawingCanvas" class="frame-drawing"></canvas>
+    </div>
+    <div class="plaque">
+      <div id="captionText" class="caption-text"></div>
+    </div>
+  </div>
+
+  <div class="timer-display">1:30</div>
+
+  <!-- Decorative mic shown during the drawing phase -->
+  <img class="display-mic" src="../assets/micassetsAsset 6 1.png" alt="microphone" />
+
+  <script src="sync.js"></script>
+  <script src="display.js"></script>
+</body>
+</html>

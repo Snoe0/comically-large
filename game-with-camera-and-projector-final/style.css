@@ -158,6 +158,54 @@ body {
 /* ---- Shared helpers ---- */
 .hidden { display: none !important; }
 
+/* ---- Idle state on game pages (follower mode, between rounds) ---- */
+/* Floor projection goes pure black; only overlays controlled by JS show. */
+body.idle { background: #000; }
+body.idle > img { display: none; }
+body.idle .game-layout,
+body.idle .timer-display,
+body.idle .prompt-label { display: none; }
+
+/* ---- Display (audience) page ---- */
+/* Default black; switches to white during the drawing phase so the big
+   centred prompt + mic read like a comedy-club placard. */
+body.display { background: #000; }
+body.display > img { display: none; }
+body.display[data-phase="play"] { background: #fff; }
+
+/* During play: prompt sits BIG in the centre, not as a small top-left chip. */
+body.display[data-phase="play"] .prompt-label {
+  top: 50%;
+  left: 50%;
+  right: auto;
+  transform: translate(-50%, -50%) rotate(-1.2deg);
+  font-size: clamp(2.5rem, 7vw, 6rem);
+  letter-spacing: 0.04em;
+  line-height: 1.1;
+  max-width: min(80vw, 1100px);
+  padding: 0.6em 0.9em;
+  text-align: center;
+  border-width: 8px;
+  box-shadow: 12px 12px 0 #000;
+  background: #fff;
+}
+
+/* Mic only shows during the drawing phase. */
+.display-mic {
+  position: fixed;
+  display: none;
+  pointer-events: none;
+  z-index: 60;
+  bottom: auto;
+  left: auto;
+  top: clamp(12px, 3vh, 40px);
+  right: clamp(12px, 3vw, 40px);
+  width: clamp(180px, 26vw, 360px);
+  height: auto;
+  object-fit: contain;
+}
+body.display[data-phase="play"] .display-mic { display: block; }
+
 /* ---- Comic Prompt Overlay ---- */
 .prompt-overlay {
   position: fixed;
